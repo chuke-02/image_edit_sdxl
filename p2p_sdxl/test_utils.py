@@ -11,7 +11,9 @@ from torchvision import utils
 from torch.optim.adam import Adam
 from PIL import Image
 from sdxl import sdxl
-pipe = sdxl.from_pretrained("/home/cas/stable-diffusion-xl-base-0.9", torch_dtype=torch.float16, use_safetensors=True, variant="fp16")
+import matplotlib.pyplot as plt
+import seaborn as sns
+pipe = sdxl.from_pretrained("/home/cas/stable-diffusion-xl-base-0.9", torch_dtype=torch.bfloat16, use_safetensors=True, variant="bf16")
 pipe.to("cuda")
 scheduler = DDIMScheduler(beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear", clip_sample=False, set_alpha_to_one=False)
 pipe.scheduler=scheduler
@@ -20,7 +22,8 @@ LOW_RESOURCE = False
 NUM_DDIM_STEPS = 50
 GUIDANCE_SCALE = 7.5
 MAX_NUM_WORDS = 77
-FP16=True
+NUM_INNER_STEPS=30
+FP16=False
 device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
 ldm_stable=pipe
 try:
@@ -37,12 +40,22 @@ class LocalBlend:
             maps = nnf.max_pool2d(maps, (k * 2 + 1, k * 2 + 1), (1, 1), padding=(k, k))
         mask = nnf.interpolate(maps, size=(x_t.shape[2:]))
         mask = mask / mask.max(2, keepdims=True)[0].max(3, keepdims=True)[0]
-        # utils.save_image(mask[0].cpu()*1.0, './vis/image1.png',cmap='gray')
-        # utils.save_image(mask[1].cpu()*1.0, './vis/image2.png',cmap='gray')
-        # for i in range(10):
-        #         utils.save_image(mask.gt(0.1*i)[0].cpu()*1.0, f"./vis/image1gt{i}.png",cmap='gray')
-        #         utils.save_image(mask.gt(0.1*i)[1].cpu()*1.0, f"./vis/image2gt{i}.png",cmap='gray')
-        mask = mask.gt(self.th[1 - int(use_pool)])
+        mask=(mask - mask.min ()) / (mask.max () - mask.min ())
+        if True and self.counter%10==0:
+            # utils.save_image(mask[0].cpu()*1.0, './vis/image1.png',cmap='gray')
+            # utils.save_image(mask[1].cpu()*1.0, './vis/image2.png',cmap='gray')
+            # for i in range(10):
+            #     utils.save_image(mask.gt(0.1*i)[0].cpu()*1.0, f"./vis/image1gt{i}.png",cmap='gray')
+            #     utils.save_image(mask.gt(0.1*i)[1].cpu()*1.0, f"./vis/image2gt{i}.png",cmap='gray')
+            
+            sns.heatmap(mask[0][0].clone().cpu(), cmap='coolwarm')
+            plt.savefig(f'./vis/heatmap0_{self.counter}.png')
+            plt.clf()
+            sns.heatmap(mask[1][0].clone().cpu(), cmap='coolwarm')
+            plt.savefig(f'./vis/heatmap1_{self.counter}.png')
+            plt.clf()
+            utils.save_image((mask.gt(0.4)[0]+mask.gt(0.4)[1]).cpu()*1.0, f"./vis/image_mask.png",cmap='gray')
+        mask = mask.gt(0.6)
 
         mask = mask[:1] + mask
         return mask
@@ -51,7 +64,7 @@ class LocalBlend:
         self.counter += 1
         if self.counter > self.start_blend:
             # 40,1024,77
-            maps = attention_store["down_cross"] + attention_store["up_cross"]#20个down,10个mid,30个up,v1.4中为4,1,6
+            maps = attention_store["down_cross"][10:] + attention_store["up_cross"][:10]#20个down,10个mid,30个up,v1.4中为4,1,6
             maps = [item.reshape(self.alpha_layers.shape[0], -1, 1, 32, 32, MAX_NUM_WORDS) for item in maps]#原来是16,16.似乎该操作有点慢
             maps = torch.cat(maps, dim=1)
             mask = self.get_mask(maps, self.alpha_layers, True,x_t)
@@ -249,8 +262,7 @@ class AttentionReplace(AttentionControlEdit):
                  local_blend: Optional[LocalBlend] = None):
         super(AttentionReplace, self).__init__(prompts, num_steps, cross_replace_steps, self_replace_steps, local_blend)
         self.mapper = seq_aligner.get_replacement_mapper(prompts, tokenizer).to(device)
-        if FP16:
-            self.mapper=self.mapper.to(torch.float16)
+        self.mapper=self.mapper.to(pipe.unet.dtype)
 
 
 class AttentionRefine(AttentionControlEdit):
@@ -594,7 +606,7 @@ class NullInversion:
         for i in range(NUM_DDIM_STEPS):
             uncond_embeddings = uncond_embeddings.clone().detach()
             uncond_embeddings.requires_grad = True
-            optimizer = Adam([uncond_embeddings], lr=1e-2 * (1. - i / 100.))
+            optimizer = Adam([uncond_embeddings], lr=0.1 * (1. - i / 100.))
             latent_prev = latents[len(latents) - i - 2]
             t = self.model.scheduler.timesteps[i]
             with torch.no_grad():
@@ -620,8 +632,8 @@ class NullInversion:
         bar.close()
         return uncond_embeddings_list
 
-    def invert(self, image_path: str, prompt: str, offsets=(0, 0, 0, 0), num_inner_steps=2, early_stop_epsilon=1e-5,
-               verbose=False):
+    def invert(self, image_path: str, prompt: str, offsets=(0, 0, 0, 0), num_inner_steps=NUM_INNER_STEPS, early_stop_epsilon=1e-5,
+               verbose=False,train_free=False):
         self.init_prompt(prompt)
         ptp_utils.register_attention_control(self.model, None)
         image_gt = load_1024(image_path, *offsets)
@@ -629,12 +641,18 @@ class NullInversion:
             print("DDIM inversion...")
         #print(1)
         image_rec, ddim_latents = self.ddim_inversion(image_gt)
-        if verbose:
-            print("Null-text optimization...")
-        #st=ddim_latents[-1]
-        uncond_embeddings = self.null_optimization(ddim_latents, num_inner_steps, early_stop_epsilon)
-        #w=st-ddim_latents[-1]
-        return (image_gt, image_rec), ddim_latents[-1], uncond_embeddings
+        if train_free is False:
+            if verbose:
+                print("Null-text optimization...")
+            #st=ddim_latents[-1]
+            uncond_embeddings = self.null_optimization(ddim_latents, num_inner_steps, early_stop_epsilon)
+            #w=st-ddim_latents[-1]
+            return (image_gt, image_rec), ddim_latents[-1], uncond_embeddings
+        else:
+            if verbose:
+                print("Negative-prompt Inversion...")
+            return (image_gt, image_rec), ddim_latents[-1], self.prompt_embeds[1].unsqueeze(0),self.pooled_prompt_embeds
+
 
     def __init__(self, model):
         self.model = model
@@ -659,7 +677,9 @@ def text2image_ldm_stable(
         latent: Optional[torch.FloatTensor] = None,
         uncond_embeddings=None,
         height=None,
-        width=None
+        width=None,
+        inversion=False,
+        pooled_uncond_embeddings=None
 ):
     return model(controller=controller,
                  prompt=prompt,
@@ -667,16 +687,18 @@ def text2image_ldm_stable(
                  num_inference_steps=num_inference_steps,
                  guidance_scale=guidance_scale,
                  generator=generator,
-                 negative_pooled_prompt_embeds=uncond_embeddings,
+                 negative_prompt_embeds=uncond_embeddings,
+                 negative_pooled_prompt_embeds=pooled_uncond_embeddings,
                  p2p=True,
                  height=height,
                  width=width,
-                 same_init=True
+                 same_init=True,
+                 inversion=inversion
                  )
 
 
 def run_and_display(prompts, controller, latent=None, run_baseline=False, generator=None, uncond_embeddings=None,
-                    verbose=True,use_old=False,one_img=False):
+                    verbose=True,use_old=False,one_img=False,inversion=False,text="",pooled_uncond_embeddings=None):
     if run_baseline:
         print("w.o. prompt-to-prompt")
         images, latent = run_and_display(prompts, EmptyControl(), latent=latent, run_baseline=False,
@@ -684,15 +706,17 @@ def run_and_display(prompts, controller, latent=None, run_baseline=False, genera
         print("with prompt-to-prompt")
     images, x_t = text2image_ldm_stable(ldm_stable, prompts, controller, latent=latent,
                                         num_inference_steps=NUM_DDIM_STEPS, guidance_scale=GUIDANCE_SCALE,
-                                        generator=generator, uncond_embeddings=uncond_embeddings)
+                                        generator=generator, uncond_embeddings=uncond_embeddings,inversion=inversion,pooled_uncond_embeddings=pooled_uncond_embeddings)
     images=np.asarray(images)
     if verbose:
         if use_old:
             ptp_utils.view_images_old(images)
         else:
-            ptp_utils.view_images(images,Notimestamp=one_img)
+            ptp_utils.view_images(images,Notimestamp=one_img,text=text)
     return images, x_t
 
+def init_model():
+    pass
 # def init_model(ddim_scheduler=True,):
 #     pipe = sdxl.from_pretrained("/home/cas/stable-diffusion-xl-base-0.9", torch_dtype=torch.float16, use_safetensors=True, variant="fp16")
 #     pipe.to("cuda")

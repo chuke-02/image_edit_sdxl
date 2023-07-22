@@ -106,7 +106,8 @@ class sdxl(StableDiffusionXLPipeline):
         crops_coords_top_left: Tuple[int, int] = (0, 0),
         target_size: Optional[Tuple[int, int]] = None,
         p2p=None,
-        same_init=False
+        same_init=False,
+        inversion=False
     ):
         r"""
         Function invoked when calling the pipeline for generation.
@@ -206,17 +207,33 @@ class sdxl(StableDiffusionXLPipeline):
         target_size = target_size or (height, width)
 
         # 1. Check inputs. Raise error if not correct
-        self.check_inputs(
-            prompt,
-            height,
-            width,
-            callback_steps,
-            negative_prompt,
-            prompt_embeds,
-            negative_prompt_embeds,
-            pooled_prompt_embeds,
-            negative_pooled_prompt_embeds,
-        )
+        if inversion is False:
+            self.check_inputs(
+                prompt,
+                height,
+                width,
+                callback_steps,
+                negative_prompt,
+                prompt_embeds,
+                negative_prompt_embeds,
+                pooled_prompt_embeds,
+                negative_pooled_prompt_embeds,
+            )
+        else:
+            negative_pooled_prompt_embeds=[]
+            for negative_prompt_embeds_per_stage in negative_prompt_embeds:
+                negative_pooled_prompt_embeds.append(negative_prompt_embeds_per_stage[:,0,768:])
+            self.check_inputs(
+                prompt,
+                height,
+                width,
+                callback_steps,
+                negative_prompt,
+                prompt_embeds,
+                negative_prompt_embeds[0],
+                pooled_prompt_embeds,
+                negative_pooled_prompt_embeds,
+            )
 
         # 2. Define call parameters
         if prompt is not None and isinstance(prompt, str):
@@ -284,30 +301,37 @@ class sdxl(StableDiffusionXLPipeline):
         )
 
         if do_classifier_free_guidance:
-            prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
-            add_text_embeds = torch.cat([negative_pooled_prompt_embeds, add_text_embeds], dim=0)
+            if isinstance(negative_prompt_embeds,List) is False:
+                all_prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
+                all_add_text_embeds = torch.cat([negative_pooled_prompt_embeds, add_text_embeds], dim=0)
+                all_prompt_embeds = all_prompt_embeds.to(device)
+                all_add_text_embeds = all_add_text_embeds.to(device)
             add_time_ids = torch.cat([add_time_ids, add_time_ids], dim=0)
 
-        prompt_embeds = prompt_embeds.to(device)
-        add_text_embeds = add_text_embeds.to(device)
+
         add_time_ids = add_time_ids.to(device).repeat(batch_size * num_images_per_prompt, 1)
 
         # 8. Denoising loop
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
-                print(t)
+                if isinstance(negative_prompt_embeds,List):
+                    if do_classifier_free_guidance:
+                        all_prompt_embeds = torch.cat([negative_prompt_embeds[i].repeat(2,1,1), prompt_embeds], dim=0)
+                        all_prompt_embeds = all_prompt_embeds.to(device)
+                        all_add_text_embeds = torch.cat([negative_pooled_prompt_embeds[i].repeat(2,1), add_text_embeds], dim=0)
+                        all_add_text_embeds = all_add_text_embeds.to(device)
                 # expand the latents if we are doing classifier free guidance
                 latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
 
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
                 # predict the noise residual
-                added_cond_kwargs = {"text_embeds": add_text_embeds, "time_ids": add_time_ids}
+                added_cond_kwargs = {"text_embeds": all_add_text_embeds, "time_ids": add_time_ids}
                 noise_pred = self.unet(
                     latent_model_input,
                     t,
-                    encoder_hidden_states=prompt_embeds,
+                    encoder_hidden_states=all_prompt_embeds,
                     cross_attention_kwargs=cross_attention_kwargs,
                     added_cond_kwargs=added_cond_kwargs,
                     return_dict=False,
@@ -508,57 +532,109 @@ class sdxl(StableDiffusionXLPipeline):
                 )
             else:
                 uncond_tokens = negative_prompt
+            
+            if isinstance(negative_prompt, List):
+                all_negative_prompt=[]
+                for negative_prompt_ in negative_prompt:
+                    negative_prompt_embeds_list = []
+                    for tokenizer, text_encoder in zip(tokenizers, text_encoders):
+                        # textual inversion: procecss multi-vector tokens if necessary
+                        if isinstance(self, TextualInversionLoaderMixin):
+                            uncond_tokens = self.maybe_convert_prompt(uncond_tokens, tokenizer)
 
-            negative_prompt_embeds_list = []
-            for tokenizer, text_encoder in zip(tokenizers, text_encoders):
-                # textual inversion: procecss multi-vector tokens if necessary
-                if isinstance(self, TextualInversionLoaderMixin):
-                    uncond_tokens = self.maybe_convert_prompt(uncond_tokens, tokenizer)
+                        max_length = prompt_embeds.shape[1]
+                        uncond_input = tokenizer(
+                            uncond_tokens,
+                            padding="max_length",
+                            max_length=max_length,
+                            truncation=True,
+                            return_tensors="pt",
+                        )
 
-                max_length = prompt_embeds.shape[1]
-                uncond_input = tokenizer(
-                    uncond_tokens,
-                    padding="max_length",
-                    max_length=max_length,
-                    truncation=True,
-                    return_tensors="pt",
-                )
+                        negative_prompt_embeds = text_encoder(
+                            uncond_input.input_ids.to(device),
+                            output_hidden_states=True,
+                        )
+                        # We are only ALWAYS interested in the pooled output of the final text encoder
+                        negative_pooled_prompt_embeds = negative_prompt_embeds[0]
+                        negative_prompt_embeds = negative_prompt_embeds.hidden_states[-2]
 
-                negative_prompt_embeds = text_encoder(
-                    uncond_input.input_ids.to(device),
-                    output_hidden_states=True,
-                )
-                # We are only ALWAYS interested in the pooled output of the final text encoder
-                negative_pooled_prompt_embeds = negative_prompt_embeds[0]
-                negative_prompt_embeds = negative_prompt_embeds.hidden_states[-2]
+                        if do_classifier_free_guidance:
+                            # duplicate unconditional embeddings for each generation per prompt, using mps friendly method
+                            seq_len = negative_prompt_embeds.shape[1]
 
-                if do_classifier_free_guidance:
-                    # duplicate unconditional embeddings for each generation per prompt, using mps friendly method
-                    seq_len = negative_prompt_embeds.shape[1]
+                            negative_prompt_embeds = negative_prompt_embeds.to(dtype=text_encoder.dtype, device=device)
 
-                    negative_prompt_embeds = negative_prompt_embeds.to(dtype=text_encoder.dtype, device=device)
+                            negative_prompt_embeds = negative_prompt_embeds.repeat(1, num_images_per_prompt, 1)
+                            negative_prompt_embeds = negative_prompt_embeds.view(
+                                batch_size * num_images_per_prompt, seq_len, -1
+                            )
 
-                    negative_prompt_embeds = negative_prompt_embeds.repeat(1, num_images_per_prompt, 1)
-                    negative_prompt_embeds = negative_prompt_embeds.view(
-                        batch_size * num_images_per_prompt, seq_len, -1
+                            # For classifier free guidance, we need to do two forward passes.
+                            # Here we concatenate the unconditional and text embeddings into a single batch
+                            # to avoid doing two forward passes
+
+                        negative_prompt_embeds_list.append(negative_prompt_embeds)
+
+                    negative_prompt_embeds = torch.concat(negative_prompt_embeds_list, dim=-1)
+                    all_negative_prompt.append(negative_prompt_embeds)
+                negative_prompt_embeds=all_negative_prompt
+            else:
+                negative_prompt_embeds_list = []
+                for tokenizer, text_encoder in zip(tokenizers, text_encoders):
+                    # textual inversion: procecss multi-vector tokens if necessary
+                    if isinstance(self, TextualInversionLoaderMixin):
+                        uncond_tokens = self.maybe_convert_prompt(uncond_tokens, tokenizer)
+
+                    max_length = prompt_embeds.shape[1]
+                    uncond_input = tokenizer(
+                        uncond_tokens,
+                        padding="max_length",
+                        max_length=max_length,
+                        truncation=True,
+                        return_tensors="pt",
                     )
 
-                    # For classifier free guidance, we need to do two forward passes.
-                    # Here we concatenate the unconditional and text embeddings into a single batch
-                    # to avoid doing two forward passes
+                    negative_prompt_embeds = text_encoder(
+                        uncond_input.input_ids.to(device),
+                        output_hidden_states=True,
+                    )
+                    # We are only ALWAYS interested in the pooled output of the final text encoder
+                    negative_pooled_prompt_embeds = negative_prompt_embeds[0]
+                    negative_prompt_embeds = negative_prompt_embeds.hidden_states[-2]
 
-                negative_prompt_embeds_list.append(negative_prompt_embeds)
+                    if do_classifier_free_guidance:
+                        # duplicate unconditional embeddings for each generation per prompt, using mps friendly method
+                        seq_len = negative_prompt_embeds.shape[1]
 
-            negative_prompt_embeds = torch.concat(negative_prompt_embeds_list, dim=-1)
+                        negative_prompt_embeds = negative_prompt_embeds.to(dtype=text_encoder.dtype, device=device)
+
+                        negative_prompt_embeds = negative_prompt_embeds.repeat(1, num_images_per_prompt, 1)
+                        negative_prompt_embeds = negative_prompt_embeds.view(
+                            batch_size * num_images_per_prompt, seq_len, -1
+                        )
+
+                        # For classifier free guidance, we need to do two forward passes.
+                        # Here we concatenate the unconditional and text embeddings into a single batch
+                        # to avoid doing two forward passes
+
+                    negative_prompt_embeds_list.append(negative_prompt_embeds)
+
+                negative_prompt_embeds = torch.concat(negative_prompt_embeds_list, dim=-1)
 
         bs_embed = pooled_prompt_embeds.shape[0]
-        pooled_prompt_embeds = pooled_prompt_embeds.repeat(1, num_images_per_prompt).view(
-            bs_embed * num_images_per_prompt, -1
-        )
-        negative_pooled_prompt_embeds = negative_pooled_prompt_embeds.repeat(1, num_images_per_prompt).view(
-            bs_embed * num_images_per_prompt, -1
-        )
-
+        if num_images_per_prompt>1:
+            pooled_prompt_embeds = pooled_prompt_embeds.repeat(1, num_images_per_prompt).view(
+                bs_embed * num_images_per_prompt, -1
+            )
+            negative_pooled_prompt_embeds = negative_pooled_prompt_embeds.repeat(1, num_images_per_prompt).view(
+                bs_embed * num_images_per_prompt, -1
+            )
+        if negative_pooled_prompt_embeds.shape[0]==1 and bs_embed!=1:
+            negative_pooled_prompt_embeds=negative_pooled_prompt_embeds.repeat(bs_embed,1)
+        if negative_prompt_embeds.shape[0]==1 and bs_embed!=1:
+            negative_prompt_embeds=negative_prompt_embeds.repeat(bs_embed,1,1)
+          
         return prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds
 
     def encode_prompt_not_zero_uncond(
