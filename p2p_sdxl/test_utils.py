@@ -17,6 +17,7 @@ pipe = sdxl.from_pretrained("/home/cas/stable-diffusion-xl-base-0.9", torch_dtyp
 pipe.to("cuda")
 scheduler = DDIMScheduler(beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear", clip_sample=False, set_alpha_to_one=False)
 pipe.scheduler=scheduler
+
 MY_TOKEN = ''
 LOW_RESOURCE = False
 NUM_DDIM_STEPS = 50
@@ -40,6 +41,13 @@ class LocalBlend:
             maps = nnf.max_pool2d(maps, (k * 2 + 1, k * 2 + 1), (1, 1), padding=(k, k))
         mask = nnf.interpolate(maps, size=(x_t.shape[2:]))
         mask = mask / mask.max(2, keepdims=True)[0].max(3, keepdims=True)[0]
+        if True and self.counter%10==0:
+            sns.heatmap(mask[0][0].clone().cpu(), cmap='coolwarm')
+            plt.savefig(f'./vis/heatmap0_old_{self.counter}.png')
+            plt.clf()
+            sns.heatmap(mask[1][0].clone().cpu(), cmap='coolwarm')
+            plt.savefig(f'./vis/heatmap1_old_{self.counter}.png')
+            plt.clf()
         mask=(mask - mask.min ()) / (mask.max () - mask.min ())
         if True and self.counter%10==0:
             # utils.save_image(mask[0].cpu()*1.0, './vis/image1.png',cmap='gray')
