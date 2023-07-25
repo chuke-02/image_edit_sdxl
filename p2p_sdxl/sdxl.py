@@ -107,7 +107,7 @@ class sdxl(StableDiffusionXLPipeline):
         target_size: Optional[Tuple[int, int]] = None,
         p2p=None,
         same_init=False,
-        inversion=False
+        null_inversion=False
     ):
         r"""
         Function invoked when calling the pipeline for generation.
@@ -207,7 +207,7 @@ class sdxl(StableDiffusionXLPipeline):
         target_size = target_size or (height, width)
 
         # 1. Check inputs. Raise error if not correct
-        if inversion is False:
+        if null_inversion is False:
             self.check_inputs(
                 prompt,
                 height,

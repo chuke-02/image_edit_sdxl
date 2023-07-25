@@ -16,15 +16,16 @@ import seaborn as sns
 pipe = sdxl.from_pretrained("/home/cas/stable-diffusion-xl-base-0.9", torch_dtype=torch.bfloat16, use_safetensors=True, variant="bf16")
 pipe.to("cuda")
 scheduler = DDIMScheduler(beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear", clip_sample=False, set_alpha_to_one=False)
-pipe.scheduler=scheduler
+pipe.scheduler=scheduler #用DDIM scheduler
 
 MY_TOKEN = ''
 LOW_RESOURCE = False
 NUM_DDIM_STEPS = 50
 GUIDANCE_SCALE = 7.5
 MAX_NUM_WORDS = 77
-NUM_INNER_STEPS=30
+NUM_INNER_STEPS=30 #null text Inversion中每个step优化几次
 FP16=False
+HEATMAP=False #是否可视化heatmap
 device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
 ldm_stable=pipe
 try:
@@ -641,7 +642,7 @@ class NullInversion:
         return uncond_embeddings_list
 
     def invert(self, image_path: str, prompt: str, offsets=(0, 0, 0, 0), num_inner_steps=NUM_INNER_STEPS, early_stop_epsilon=1e-5,
-               verbose=False,train_free=False):
+               verbose=False,train_free=True):
         self.init_prompt(prompt)
         ptp_utils.register_attention_control(self.model, None)
         image_gt = load_1024(image_path, *offsets)
@@ -686,7 +687,7 @@ def text2image_ldm_stable(
         uncond_embeddings=None,
         height=None,
         width=None,
-        inversion=False,
+        null_inversion=False,
         pooled_uncond_embeddings=None
 ):
     return model(controller=controller,
@@ -701,12 +702,12 @@ def text2image_ldm_stable(
                  height=height,
                  width=width,
                  same_init=True,
-                 inversion=inversion
+                 null_inversion=null_inversion
                  )
 
 
 def run_and_display(prompts, controller, latent=None, run_baseline=False, generator=None, uncond_embeddings=None,
-                    verbose=True,use_old=False,one_img=False,inversion=False,text="",pooled_uncond_embeddings=None):
+                    verbose=True,use_old=False,one_img=False,null_inversion=False,text="",pooled_uncond_embeddings=None):
     if run_baseline:
         print("w.o. prompt-to-prompt")
         images, latent = run_and_display(prompts, EmptyControl(), latent=latent, run_baseline=False,
@@ -714,7 +715,7 @@ def run_and_display(prompts, controller, latent=None, run_baseline=False, genera
         print("with prompt-to-prompt")
     images, x_t = text2image_ldm_stable(ldm_stable, prompts, controller, latent=latent,
                                         num_inference_steps=NUM_DDIM_STEPS, guidance_scale=GUIDANCE_SCALE,
-                                        generator=generator, uncond_embeddings=uncond_embeddings,inversion=inversion,pooled_uncond_embeddings=pooled_uncond_embeddings)
+                                        generator=generator, uncond_embeddings=uncond_embeddings,null_inversion=null_inversion,pooled_uncond_embeddings=pooled_uncond_embeddings)
     images=np.asarray(images)
     if verbose:
         if use_old:
