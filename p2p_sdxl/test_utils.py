@@ -25,7 +25,7 @@ GUIDANCE_SCALE = 7.5
 MAX_NUM_WORDS = 77
 NUM_INNER_STEPS=30 #null text Inversion中每个step优化几次
 FP16=False
-HEATMAP=False #是否可视化heatmap
+HEATMAP=True #是否可视化heatmap
 device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
 ldm_stable=pipe
 try:
@@ -42,7 +42,7 @@ class LocalBlend:
             maps = nnf.max_pool2d(maps, (k * 2 + 1, k * 2 + 1), (1, 1), padding=(k, k))
         mask = nnf.interpolate(maps, size=(x_t.shape[2:]))
         mask = mask / mask.max(2, keepdims=True)[0].max(3, keepdims=True)[0]
-        if True and self.counter%10==0:
+        if HEATMAP and self.counter%10==0:
             sns.heatmap(mask[0][0].clone().cpu(), cmap='coolwarm')
             plt.savefig(f'./vis/heatmap0_old_{self.counter}.png')
             plt.clf()
@@ -50,7 +50,7 @@ class LocalBlend:
             plt.savefig(f'./vis/heatmap1_old_{self.counter}.png')
             plt.clf()
         mask=(mask - mask.min ()) / (mask.max () - mask.min ())
-        if True and self.counter%10==0:
+        if HEATMAP and self.counter%10==0:
             # utils.save_image(mask[0].cpu()*1.0, './vis/image1.png',cmap='gray')
             # utils.save_image(mask[1].cpu()*1.0, './vis/image2.png',cmap='gray')
             # for i in range(10):
@@ -707,7 +707,7 @@ def text2image_ldm_stable(
 
 
 def run_and_display(prompts, controller, latent=None, run_baseline=False, generator=None, uncond_embeddings=None,
-                    verbose=True,use_old=False,one_img=False,null_inversion=False,text="",pooled_uncond_embeddings=None):
+                    verbose=True,use_old=False,one_img=False,null_inversion=False,text="",pooled_uncond_embeddings=None,folder=None):
     if run_baseline:
         print("w.o. prompt-to-prompt")
         images, latent = run_and_display(prompts, EmptyControl(), latent=latent, run_baseline=False,
@@ -721,7 +721,7 @@ def run_and_display(prompts, controller, latent=None, run_baseline=False, genera
         if use_old:
             ptp_utils.view_images_old(images)
         else:
-            ptp_utils.view_images(images,Notimestamp=one_img,text=text)
+            ptp_utils.view_images(images,Notimestamp=one_img,text=text,folder=folder)
     return images, x_t
 
 def init_model():

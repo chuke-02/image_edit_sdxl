@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import os
 
 import numpy as np
 import torch
@@ -37,7 +38,7 @@ def text_under_image(image: np.ndarray, text: str, text_color: Tuple[int, int, i
 from datetime import datetime
 
 
-def view_images(images, num_rows=1, offset_ratio=0.02,text="",folder=None,Notimestamp=False):
+def view_images(images, num_rows=1, offset_ratio=0.02,text="",folder=None,Notimestamp=False,grid_dict=None,subfolder=None):
     if type(images) is list:
         num_empty = len(images) % num_rows
     elif images.ndim == 4:
@@ -62,18 +63,91 @@ def view_images(images, num_rows=1, offset_ratio=0.02,text="",folder=None,Notime
 
     pil_img = Image.fromarray(image_)
 
+    pil_img_=draw_axis(pil_img,grid_dict,num_cols,num_rows).resize((2048,2048))
+    
     now = datetime.now()
     if Notimestamp is False:
         timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")
     else:
         timestamp=""
     if folder is not None:
-        filename = "./"+folder+"/"+text+f"img_{timestamp}.jpg"
+        dirname="./"+folder
+        filename = text+f"img_{timestamp}.jpg"
     else:
-        filename = f"./img/"+text+f"img_{timestamp}.jpg"
+        if subfolder is not None:
+            dirname=os.path.join("./img", subfolder,now.strftime("%Y-%m-%d"))
+            filename =text+f"img_{timestamp}.jpg"
+        else:
+            dirname=os.path.join("./img",now.strftime("%Y-%m-%d"))
+            filename =text+f"img_{timestamp}.jpg"
+    if not os.path.exists(dirname):
+        os.makedirs(dirname)
+    pil_img.save(os.path.join(dirname, filename))
+    dirname=os.path.join(dirname, "2048x")
+    if  grid_dict is not None or grid_dict is not False:
+        if not os.path.exists(dirname):
+            os.makedirs(dirname)
+        pil_img_.save(os.path.join(dirname, filename[:-4]+"_comment.jpg"))
+    
 
-    pil_img.save(filename)
+def draw_axis(img,grid_dict,x_len,y_len):
+    if grid_dict is not None or grid_dict is not False:
+        assert isinstance(grid_dict,Dict)
+        assert "x_title" in grid_dict
+        assert "y_title" in grid_dict
+        assert "x_text_list" in grid_dict
+        assert "y_text_list" in grid_dict
+        x_title=grid_dict["x_title"]
+        y_title=grid_dict["y_title"]
+        x_text_list=grid_dict['x_text_list']
+        y_text_list=grid_dict['y_text_list']
+        assert len(y_text_list)==y_len
+        assert len(x_text_list)==x_len
+        assert "font_size" in grid_dict
+        font_size=grid_dict["font_size"]
+        if "x_color" in grid_dict:
+            color_x=grid_dict['x_color']
+        else:
+            color_x="black"
+        if "y_color" in grid_dict:
+            color_y=grid_dict['y_color']
+        else:
+            color_y="black"
+        width, height = img.size
+        num_x=x_len
+        num_y=y_len
+        color_x="black"
+        color_y="black"
+        
+        new_img = Image.new("RGB", (width + width // num_x, height + height // num_y), color=(255, 255, 255))
 
+        new_img.paste(img, (width // num_x, height // num_y))
+
+        draw = ImageDraw.Draw(new_img)
+        width,height=(width + width // num_x, height + height // num_y)
+
+        font = ImageFont.truetype("DejaVuSansMono.ttf", font_size)
+        for i in range(2, num_x+1):
+            x = (i - 1) * width // num_x + width // (num_x * 2)-(width//num_x)*(num_x-i)*0.2//num_x
+            y = height // (num_y * 2) - (height // num_y) * num_y * 0.2 // num_y
+            k=i-1
+            draw.text((x, y), "{:.2f}".format(x_text_list[i-2]), font=font,fill=color_x)
+
+        for i in range(2, num_y+1):
+            x = width // (num_y * 2)
+            y = (i - 1) * height // num_y + height // (num_y * 2)-(height//num_y)*(num_y-i)*0.2//num_y
+            k = i - 1
+            draw.text((x, y), "{:.2f}".format(y_text_list[i-2]), font=font,fill=color_y)
+        i=1
+        x = (i - 1) * width // num_x + width // (num_x * 2) - (width // num_x) * (num_x - i) * 0.2 // num_x
+        y = height // (num_y * 2)
+        draw.text((x, y), y_title, font=font, fill=color_y)
+        x = width // (num_y * 2)
+        y = (i - 1) * height // num_y + height // (num_y * 2) - (height // num_y) * (num_y - i) * 0.2 // num_y
+        draw.text((x, y), x_title, font=font, fill=color_x)
+    else:
+        print("grid_dict格式错误,跳过图例的生成")
+    return new_img
 
 def diffusion_step(model, controller, latents, context, t, guidance_scale, low_resource=False):
     if low_resource:
