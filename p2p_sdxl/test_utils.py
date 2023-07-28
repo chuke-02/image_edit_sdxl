@@ -13,7 +13,7 @@ from PIL import Image
 from sdxl import sdxl
 import matplotlib.pyplot as plt
 import seaborn as sns
-pipe = sdxl.from_pretrained("/home/cas/stable-diffusion-xl-base-0.9", torch_dtype=torch.bfloat16, use_safetensors=True, variant="bf16")
+pipe = sdxl.from_pretrained("/home/wck/stable-diffusion-xl-base-1.0", torch_dtype=torch.bfloat16, use_safetensors=True, variant="bf16")
 pipe.to("cuda")
 scheduler = DDIMScheduler(beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear", clip_sample=False, set_alpha_to_one=False)
 pipe.scheduler=scheduler #用DDIM scheduler

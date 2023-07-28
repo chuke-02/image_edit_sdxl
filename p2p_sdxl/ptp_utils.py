@@ -84,14 +84,14 @@ def view_images(images, num_rows=1, offset_ratio=0.02,text="",folder=None,Notime
         os.makedirs(dirname)
     pil_img.save(os.path.join(dirname, filename))
     dirname=os.path.join(dirname, "2048x")
-    if  grid_dict is not None or grid_dict is not False:
+    if grid_dict is not None and grid_dict is not False:
         if not os.path.exists(dirname):
             os.makedirs(dirname)
         pil_img_.save(os.path.join(dirname, filename[:-4]+"_comment.jpg"))
     
 
 def draw_axis(img,grid_dict,x_len,y_len):
-    if grid_dict is not None or grid_dict is not False:
+    if grid_dict is not None and grid_dict is not False:
         assert isinstance(grid_dict,Dict)
         assert "x_title" in grid_dict
         assert "y_title" in grid_dict
@@ -120,33 +120,35 @@ def draw_axis(img,grid_dict,x_len,y_len):
         color_y="black"
         
         new_img = Image.new("RGB", (width + width // num_x, height + height // num_y), color=(255, 255, 255))
-
+        width,height=(width + width // num_x, height + height // num_y)
+        num_x=num_x+1
+        num_y=num_y+1
         new_img.paste(img, (width // num_x, height // num_y))
 
         draw = ImageDraw.Draw(new_img)
-        width,height=(width + width // num_x, height + height // num_y)
 
         font = ImageFont.truetype("DejaVuSansMono.ttf", font_size)
         for i in range(2, num_x+1):
-            x = (i - 1) * width // num_x + width // (num_x * 2)-(width//num_x)*(num_x-i)*0.2//num_x
-            y = height // (num_y * 2) - (height // num_y) * num_y * 0.2 // num_y
+            x = (i - 1) * width // num_x + width // (num_x * 2)-width *0.2// num_x
+            y = height // (num_y * 2)
             k=i-1
             draw.text((x, y), "{:.2f}".format(x_text_list[i-2]), font=font,fill=color_x)
 
         for i in range(2, num_y+1):
-            x = width // (num_y * 2)
-            y = (i - 1) * height // num_y + height // (num_y * 2)-(height//num_y)*(num_y-i)*0.2//num_y
+            x = width // (num_y * 2)-width *0.1// num_x
+            y = (i - 1) * height // num_y + height // (num_y * 2)-height*0.1//num_y
             k = i - 1
             draw.text((x, y), "{:.2f}".format(y_text_list[i-2]), font=font,fill=color_y)
         i=1
-        x = (i - 1) * width // num_x + width // (num_x * 2) - (width // num_x) * (num_x - i) * 0.2 // num_x
-        y = height // (num_y * 2)
+        x = (i - 1) * width // num_x + width // (num_x * 2)-height*0.1//num_y
+        y = height // (num_y * 2)+width *0.2// num_x
         draw.text((x, y), y_title, font=font, fill=color_y)
-        x = width // (num_y * 2)
-        y = (i - 1) * height // num_y + height // (num_y * 2) - (height // num_y) * (num_y - i) * 0.2 // num_y
+        x = width // (num_y * 2)+width *0.2// num_x
+        y = (i - 1) * height // num_y + height // (num_y * 2)
         draw.text((x, y), x_title, font=font, fill=color_x)
     else:
-        print("grid_dict格式错误,跳过图例的生成")
+        #print("grid_dict格式错误,跳过图例的生成")
+        new_img=img
     return new_img
 
 def diffusion_step(model, controller, latents, context, t, guidance_scale, low_resource=False):

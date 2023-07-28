@@ -69,14 +69,14 @@ elif branch==5:
     grid_dict={"x_title":"self","y_title":"cross","font_size":200}
     x_text_list=[]
     y_text_list=[]
-    for i in range(5):
+    for i in range(9):
         x_text_list.append(i*0.1)
         y_text_list.append(i*0.1)
     grid_dict["x_text_list"]=x_text_list
     grid_dict["y_text_list"]=y_text_list
     #(image_gt, image_enc), x_t, prompt_embeds,pooled_prompt_embeds = null_inversion.invert(image_path, prompt, offsets=(0,0,0,0), verbose=True,train_free=True)
-    for i in range(5):
-        for j in range(5):
+    for i in range(9):
+        for j in range(9):
             i0=i*0.1
             j0=j*0.1
             prompts = ["Photo of a cat riding on a little bicycle",
@@ -86,10 +86,10 @@ elif branch==5:
             self_replace_steps = j0
             blend_word = ((('bicycle',), (f"{target}",))) # for local edit. If it is not local yet - use only the source object: blend_word = ((('cat',), ("cat",))).
             eq_params = {"words": (f"{target}",), "values": (2,)}
-            controller = make_controller(prompts, True, cross_replace_steps, self_replace_steps,None,eq_params)
+            controller = make_controller(prompts, True, cross_replace_steps, self_replace_steps,blend_word,eq_params)
             images, _ = run_and_display(prompts, controller, run_baseline=False, latent=None, uncond_embeddings=None,pooled_uncond_embeddings=None,use_old=False,one_img=True,generator=g_cpu,null_inversion=False,verbose=False)
             ans.append(images[1])
-    ptp_utils.view_images(ans,num_rows=5,text="cmp_woInverse",grid_dict=grid_dict)
+    ptp_utils.view_images(ans,num_rows=9,text="cmp_woInverse",grid_dict=grid_dict)
 elif branch==6:
     target="car"
     image_path = "./example_images/dog.jpg"
