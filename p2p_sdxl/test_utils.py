@@ -13,9 +13,10 @@ from PIL import Image
 from sdxl import sdxl
 import matplotlib.pyplot as plt
 import seaborn as sns
-pipe = sdxl.from_pretrained("/home/wck/stable-diffusion-xl-base-1.0", torch_dtype=torch.bfloat16, use_safetensors=True, variant="bf16")
+from ddim_scheduler import DDIMSchedulerDev
+pipe = sdxl.from_pretrained("/stable-diffusion-xl-base-1.0", torch_dtype=torch.float16, use_safetensors=True, variant="fp16")
 pipe.to("cuda")
-scheduler = DDIMScheduler(beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear", clip_sample=False, set_alpha_to_one=False)
+scheduler = DDIMSchedulerDev(beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear", clip_sample=False, set_alpha_to_one=False)
 pipe.scheduler=scheduler #用DDIM scheduler
 
 MY_TOKEN = ''
@@ -64,7 +65,7 @@ class LocalBlend:
             plt.savefig(f'./vis/heatmap1_{self.counter}.png')
             plt.clf()
             utils.save_image((mask.gt(0.4)[0]+mask.gt(0.4)[1]).cpu()*1.0, f"./vis/image_mask.png",cmap='gray')
-        mask = mask.gt(0.6)
+        mask = mask.gt(0.5)
 
         mask = mask[:1] + mask
         return mask
@@ -642,7 +643,7 @@ class NullInversion:
         return uncond_embeddings_list
 
     def invert(self, image_path: str, prompt: str, offsets=(0, 0, 0, 0), num_inner_steps=NUM_INNER_STEPS, early_stop_epsilon=1e-5,
-               verbose=False,train_free=True):
+               verbose=False,train_free=True,all_latents=False):
         self.init_prompt(prompt)
         ptp_utils.register_attention_control(self.model, None)
         image_gt = load_1024(image_path, *offsets)
@@ -660,7 +661,10 @@ class NullInversion:
         else:
             if verbose:
                 print("Negative-prompt Inversion...")
-            return (image_gt, image_rec), ddim_latents[-1], self.prompt_embeds[1].unsqueeze(0),self.pooled_prompt_embeds
+            if all_latents:
+                return (image_gt, image_rec), ddim_latents[-1], ddim_latents,self.prompt_embeds[1].unsqueeze(0),self.pooled_prompt_embeds
+            else:
+                return (image_gt, image_rec), ddim_latents[-1], self.prompt_embeds[1].unsqueeze(0),self.pooled_prompt_embeds
 
 
     def __init__(self, model):
@@ -688,7 +692,8 @@ def text2image_ldm_stable(
         height=None,
         width=None,
         null_inversion=False,
-        pooled_uncond_embeddings=None
+        pooled_uncond_embeddings=None,
+        **kwargs
 ):
     return model(controller=controller,
                  prompt=prompt,
@@ -702,20 +707,21 @@ def text2image_ldm_stable(
                  height=height,
                  width=width,
                  same_init=True,
-                 null_inversion=null_inversion
+                 null_inversion=null_inversion,
+                 **kwargs
                  )
 
 
 def run_and_display(prompts, controller, latent=None, run_baseline=False, generator=None, uncond_embeddings=None,
-                    verbose=True,use_old=False,one_img=False,null_inversion=False,text="",pooled_uncond_embeddings=None,folder=None):
+                    verbose=True,use_old=False,one_img=False,null_inversion=False,text="",pooled_uncond_embeddings=None,folder=None,**kwargs):
     if run_baseline:
         print("w.o. prompt-to-prompt")
         images, latent = run_and_display(prompts, EmptyControl(), latent=latent, run_baseline=False,
-                                         generator=generator)
+                                         generator=generator,**kwargs)
         print("with prompt-to-prompt")
     images, x_t = text2image_ldm_stable(ldm_stable, prompts, controller, latent=latent,
                                         num_inference_steps=NUM_DDIM_STEPS, guidance_scale=GUIDANCE_SCALE,
-                                        generator=generator, uncond_embeddings=uncond_embeddings,null_inversion=null_inversion,pooled_uncond_embeddings=pooled_uncond_embeddings)
+                                        generator=generator, uncond_embeddings=uncond_embeddings,null_inversion=null_inversion,pooled_uncond_embeddings=pooled_uncond_embeddings,**kwargs)
     images=np.asarray(images)
     if verbose:
         if use_old:

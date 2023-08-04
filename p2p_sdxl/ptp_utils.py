@@ -63,8 +63,14 @@ def view_images(images, num_rows=1, offset_ratio=0.02,text="",folder=None,Notime
 
     pil_img = Image.fromarray(image_)
 
-    pil_img_=draw_axis(pil_img,grid_dict,num_cols,num_rows).resize((2048,2048))
-    
+    pil_img_=draw_axis(pil_img,grid_dict,num_cols,num_rows)
+    if pil_img_.size[0]==pil_img_.size[1]:
+        pil_img_.resize((2048,2048))
+    else:
+        longer_side = max(pil_img.size)
+        ratio = 2048/longer_side
+        new_size = tuple([int(x*ratio) for x in pil_img.size])
+        pil_img = pil_img.resize(new_size)
     now = datetime.now()
     if Notimestamp is False:
         timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")
@@ -113,11 +119,23 @@ def draw_axis(img,grid_dict,x_len,y_len):
             color_y=grid_dict['y_color']
         else:
             color_y="black"
+        if "num_decimals" in grid_dict:
+            num_decimals=grid_dict['num_decimals']
+        else:
+            num_decimals=2
+        if "shift_x" in grid_dict:
+            shift_x_x,shift_x_y=grid_dict['shift_x']
+        else:
+            shift_x_x=shift_x_y=0
+        if "shift_y" in grid_dict:
+            shift_y_x,shift_y_y=grid_dict['shift_y']
+        else:
+            shift_y_x=shift_y_y=0
         width, height = img.size
         num_x=x_len
         num_y=y_len
-        color_x="black"
-        color_y="black"
+        #color_x="black"
+        #color_y="black"
         
         new_img = Image.new("RGB", (width + width // num_x, height + height // num_y), color=(255, 255, 255))
         width,height=(width + width // num_x, height + height // num_y)
@@ -129,23 +147,29 @@ def draw_axis(img,grid_dict,x_len,y_len):
 
         font = ImageFont.truetype("DejaVuSansMono.ttf", font_size)
         for i in range(2, num_x+1):
-            x = (i - 1) * width // num_x + width // (num_x * 2)-width *0.2// num_x
-            y = height // (num_y * 2)
+            x = (i - 1) * width // num_x + width // (num_x * 2)-width *0.2// num_x+shift_x_x
+            y = height // (num_y * 2)+shift_x_y
             k=i-1
-            draw.text((x, y), "{:.2f}".format(x_text_list[i-2]), font=font,fill=color_x)
+            if  isinstance(x_text_list[i-2],str):
+                draw.text((x, y), x_text_list[i-2], font=font,fill=color_x,align="center")
+            else:
+                draw.text((x, y), "{:.{}f}".format(x_text_list[i-2],num_decimals), font=font,fill=color_x,align="center")
 
         for i in range(2, num_y+1):
-            x = width // (num_y * 2)-width *0.1// num_x
-            y = (i - 1) * height // num_y + height // (num_y * 2)-height*0.1//num_y
+            x = width // (num_x * 2)-width *0.1// num_x+shift_y_x
+            y = (i - 1) * height // num_y + height // (num_y * 2)-height*0.1//num_y+shift_y_y
             k = i - 1
-            draw.text((x, y), "{:.2f}".format(y_text_list[i-2]), font=font,fill=color_y)
+            if isinstance(y_text_list[i-2],str):
+                draw.text((x, y), y_text_list[i-2], font=font,fill=color_y,align="center")
+            else:
+                draw.text((x, y), "{:.{}f}".format(y_text_list[i-2],num_decimals), font=font,fill=color_y,align="center")
         i=1
-        x = (i - 1) * width // num_x + width // (num_x * 2)-height*0.1//num_y
-        y = height // (num_y * 2)+width *0.2// num_x
-        draw.text((x, y), y_title, font=font, fill=color_y)
-        x = width // (num_y * 2)+width *0.2// num_x
-        y = (i - 1) * height // num_y + height // (num_y * 2)
-        draw.text((x, y), x_title, font=font, fill=color_x)
+        x = (i - 1) * width // num_x + width // (num_x * 2)-height*0.1//num_y+shift_y_x
+        y = height // (num_y * 2)+width *0.2// num_x+shift_y_y
+        draw.text((x, y), y_title, font=font, fill=color_y,align="center")
+        x = width // (num_x * 2)+width *0.2// num_x+shift_x_x
+        y = (i - 1) * height // num_y + height // (num_y * 2)+shift_x_y
+        draw.text((x, y), x_title, font=font, fill=color_x,align="center")
     else:
         #print("grid_dict格式错误,跳过图例的生成")
         new_img=img
@@ -295,7 +319,7 @@ def register_attention_control(model, controller):
             # attention, what we cannot get enough of
 
             attn = sim.softmax(dim=-1)
-            attn0=attn.clone().detach()
+            #attn0=attn.clone().detach()
             attn = controller(attn, is_cross, place_in_unet)
             out = torch.einsum("b i j, b j d -> b i d", attn, v)
             out = self.batch_to_head_dim(out)

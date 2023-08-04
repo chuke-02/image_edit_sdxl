@@ -1,0 +1,13 @@
+invisible-watermark
+diffusers==0.18.2
+ipython==8.14.0
+matplotlib==3.7.2
+numpy==1.25.1
+opencv_python==4.6.0.66
+Pillow==9.5.0
+pytorch_lightning==2.0.1
+seaborn==0.12.2
+torch==2.0.1
+torchvision==0.15.2
+tqdm==4.65.0
+transformers==4.30.2
