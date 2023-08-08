@@ -1,6 +1,6 @@
 import torch
 import ptp_utils
-from test_utils import AttentionReplace,run_and_display,NUM_DDIM_STEPS,make_controller,null_inversion,EmptyControl,ldm_stable
+from run_ptp_utils import AttentionReplace,run_and_display,NUM_DDIM_STEPS,make_controller,null_inversion,EmptyControl,ldm_stable
 #import importlib
 
 if True:

@@ -1,9 +1,9 @@
 
 import torch
 import ptp_utils
-from test_utils import AttentionReplace,run_and_display,NUM_DDIM_STEPS,make_controller,null_inversion,EmptyControl,ldm_stable
+from run_ptp_utils import AttentionReplace,run_and_display,NUM_DDIM_STEPS,make_controller,null_inversion,EmptyControl,ldm_stable
 import time
-branch =3
+branch =16
 
 if branch==1:#弃用
     prompts = ["A painting of a squirrel eating a burger",
@@ -181,7 +181,7 @@ elif branch==10:#测试新图
     ptp_utils.view_images(ans,num_rows=9,text="cmp",grid_dict=grid_dict)
 elif branch==11:#连续测试
     for w in range(1,2):
-        from test_utils import AttentionReplace,run_and_display,NUM_DDIM_STEPS,make_controller,null_inversion,EmptyControl,ldm_stable
+        from p2p_sdxl.run_ptp_utils import AttentionReplace,run_and_display,NUM_DDIM_STEPS,make_controller,null_inversion,EmptyControl,ldm_stable
         target="motorcycle"
         image_path = f"./example_images/cat_bike2.jpg"
         prompt = "Photo of a cat riding on a little bicycle"
