@@ -318,11 +318,14 @@ class sdxl(StableDiffusionXLPipeline):
                         all_prompt_embeds = all_prompt_embeds.to(device)
                         all_add_text_embeds = torch.cat([negative_pooled_prompt_embeds[i].repeat(2,1), add_text_embeds], dim=0)
                         all_add_text_embeds = all_add_text_embeds.to(device)
+                if controller is not None and hasattr(controller,"self_guidance_callback"): # self guidance
+                    latents = latents.requires_grad_(True)
                 # expand the latents if we are doing classifier free guidance
                 latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
 
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
+   
                 # predict the noise residual
                 added_cond_kwargs = {"text_embeds": all_add_text_embeds, "time_ids": add_time_ids}
                 noise_pred = self.unet(
@@ -333,7 +336,10 @@ class sdxl(StableDiffusionXLPipeline):
                     added_cond_kwargs=added_cond_kwargs,
                     return_dict=False,
                 )[0]
-
+                if  controller is not None and hasattr(controller,"self_guidance_callback"):
+                    latents=controller.self_guidance_callback(t,latents,self.scheduler)
+                    latents.zero_grad()
+                    latents = latents.requires_grad_(False)
                 kwargs.update(extra_step_kwargs)
                 latents=exec_classifier_free_guidance(self,
                                                       latents,
@@ -890,8 +896,8 @@ def exec_classifier_free_guidance(model,latents,controller,t,guidance_scale,
                             sns.heatmap(mask_edit[1][kk].clone().cpu(), cmap='coolwarm')
                             plt.savefig(f'./vis/heatmap1_mask_old_no_dilate_{i}_{kk}.png')
                             plt.clf()
-                    if kwargs.get('dilate_mask', 2) > 0:
-                        radius = int(kwargs.get('dilate_mask', 2))
+                    if kwargs.get('dilate_mask', 0) > 0:
+                        radius = int(kwargs.get('dilate_mask', 0))
                         mask_edit = dilate(mask_edit.float(), kernel_size=2*radius+1, padding=radius)
                     if i%10==0:
                         for kk in range(4):
@@ -933,4 +939,5 @@ def exec_classifier_free_guidance(model,latents,controller,t,guidance_scale,
     # controller
     if controller is not None:
         latents = controller.step_callback(latents)
+        
     return latents.to(model.unet.dtype)
