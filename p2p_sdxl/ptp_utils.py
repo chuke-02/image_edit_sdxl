@@ -320,6 +320,8 @@ def register_attention_control(model, controller):
 
             attn = sim.softmax(dim=-1)
             #attn0=attn.clone().detach()
+            # if attn.shape[0]==80 and attn.shape[2]==77:
+            #     print(111)
             attn = controller(attn, is_cross, place_in_unet)
             out = torch.einsum("b i j, b j d -> b i d", attn, v)
             out = self.batch_to_head_dim(out)

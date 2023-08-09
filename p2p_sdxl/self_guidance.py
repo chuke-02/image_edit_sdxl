@@ -7,7 +7,7 @@ from run_ptp_utils import AttentionControlEdit,NUM_DDIM_STEPS
 import ptp_utils
 from torch.nn.functional import mse_loss
 from collections import Counter
-class SelfGuidanceCompute:
+class SelfGuidanceCompute(nn.Module):
     def __init__(self, prompts: List[str],edit_words:str,tokenizer,max_num_words=77,mode=None,value=None,**kwargs):
         self.batch_size=len(prompts)
         self.tokenizer=tokenizer
@@ -29,7 +29,7 @@ class SelfGuidanceCompute:
         return mask,other_mask
     
     def get_maps(self,attention_store,use_pool=False,up_sample=False):# self_attn
-        maps = attention_store["down_cross"][10:] + attention_store["up_cross"][:10] 
+        maps = attention_store["down_cross"][15:] + attention_store["up_cross"][:5] 
         maps = [item.reshape(self.batch_size, -1, 1, 32, 32, self.max_num_words) for item in maps]
         maps = torch.cat(maps, dim=1)#[2,40,1,32,32,77]
         #maps=(maps * self.alpha_layers).sum(-1).mean(1)
@@ -41,6 +41,8 @@ class SelfGuidanceCompute:
         self.target_maps,self.other_maps=maps[:,:,:,self.alpha_layers],maps[:,:,:,self.other_layers]
         if len(self.target_maps.shape)==3:
             self.target_maps=self.target_maps.unsqueeze(3)
+        # self.target_maps=torch.cat([self.target_maps]*2,dim=0)
+        # self.other_maps=torch.cat([self.other_maps]*2,dim=0)
         #2,32,32,?
     def get_activations(self,a):
         pass
@@ -51,17 +53,21 @@ class SelfGuidanceCompute:
         return shape_target,shape_other
     
     def compute_centroid(self):
-        H,W=self.target_maps.shape[1:3]
-        H_cnt=torch.arange(0,H).to(self.target_maps.dtype).to(self.tensor_device)
-        W_cnt=torch.arange(0,W).to(self.target_maps.dtype).to(self.tensor_device)
-        H_centroid_target=torch.einsum("bhwt,h->bt",self.target_maps,H_cnt)
-        W_centroid_target=torch.einsum("bhwt,w->bt",self.target_maps,W_cnt)
-        
-        H,W=self.other_maps.shape[1:3]
-        H_cnt=torch.arange(0,H).to(self.other_maps.dtype).to(self.tensor_device)
-        W_cnt=torch.arange(0,W).to(self.other_maps.dtype).to(self.tensor_device)
-        H_centroid_other=torch.einsum("bhwt,h->bt",self.other_maps,H_cnt)
-        W_centroid_other=torch.einsum("bhwt,w->bt",self.other_maps,W_cnt)
+        B,H,W,C=self.target_maps.shape
+        target_maps=self.target_maps.reshape(B,H*W,C).softmax(dim=1)
+        target_maps=target_maps.reshape(B,H,W,C).float()
+        H_cnt=torch.arange(0,H).to(target_maps.dtype).to(self.tensor_device)
+        W_cnt=torch.arange(0,W).to(target_maps.dtype).to(self.tensor_device)
+        H_centroid_target=torch.einsum("bhwt,h->bt",target_maps,H_cnt)
+        W_centroid_target=torch.einsum("bhwt,w->bt",target_maps,W_cnt)
+
+        B,H,W,C=self.other_maps.shape
+        other_maps=self.other_maps.reshape(B,H*W,C).softmax(dim=1)
+        other_maps=other_maps.reshape(B,H,W,C).float()
+        H_cnt=torch.arange(0,H).to(other_maps.dtype).to(self.tensor_device)
+        W_cnt=torch.arange(0,W).to(other_maps.dtype).to(self.tensor_device)
+        H_centroid_other=torch.einsum("bhwt,h->bt",other_maps,H_cnt)
+        W_centroid_other=torch.einsum("bhwt,w->bt",other_maps,W_cnt)
         return H_centroid_target,W_centroid_target,H_centroid_other,W_centroid_other
     
     def compute_size(self):
@@ -85,11 +91,11 @@ class SelfGuidanceCompute:
         if self.mode=="up":
             shift_len=int(H*value)
             H_centroid=H_centroid-shift_len
-            shape=torch.cat([shape[:shift_len,:,:],torch.zeros(shift_len,W,C).to(device)],dim=0)
+            shape=torch.cat([shape[shift_len:,:,:],torch.zeros(shift_len,W,C).to(device)],dim=0)
         elif self.mode=="down":
             shift_len=int(H*value)
             H_centroid=H_centroid+shift_len
-            shape=torch.cat([torch.zeros(shift_len,W,C).to(device),shape[shift_len:,:,:]],dim=0)
+            shape=torch.cat([torch.zeros(shift_len,W,C).to(device),shape[:shift_len,:,:]],dim=0)
         elif self.mode=="left":
             shift_len=int(W*value)
             W_centroid=W_centroid-shift_len
@@ -124,28 +130,42 @@ class SelfGuidanceCompute:
         W_centroid_new.requires_grad_(True)
         appearance_ori,appearance_new=appearance[0],appearance[1]
         if need_edit:
-            shape_new,size_new,H_centroid_new,W_centroid_new,appearance_new=self.exec_edit(shape_new,size_new,H_centroid_new,W_centroid_new,appearance_new)
-        loss={}
-        if compute_shape_loss:
-            loss['shape_loss']=mse_loss(shape_ori,shape_new,reduction='mean')
-        if compute_size_loss:
-            loss['size_loss']=mse_loss(size_ori,size_new,reduction='mean')
-        if compute_centroid_loss:
-            
-            loss['centroid_loss']=mse_loss(H_centroid_ori,H_centroid_new,reduction='mean') / (H*W)
-            loss['centroid_loss'].requires_grad_(True)
-            loss['centroid_loss']+=mse_loss(W_centroid_ori,W_centroid_new,reduction='mean') / (H*W)
-            
-        if compute_appearance_loss:
-            loss['appearance_loss']=mse_loss(appearance_ori,appearance_new,reduction='mean')
-        x=torch.rand(2,2,requires_grad=True)
+            shape_new_,size_new_,H_centroid_new_,W_centroid_new_,appearance_new_=self.exec_edit(shape_new,size_new,H_centroid_new,W_centroid_new,appearance_new)
+            loss={}
+            if compute_shape_loss:
+                loss['shape_loss']=mse_loss(shape_ori,shape_new_,reduction='mean')
+            if compute_size_loss:
+                loss['size_loss']=mse_loss(size_ori,size_new_,reduction='mean')
+            if compute_centroid_loss:
+                
+                loss['centroid_loss']=mse_loss(H_centroid_ori,H_centroid_new_,reduction='mean')
+                #loss['centroid_loss'].requires_grad_(True)
+                loss['centroid_loss']+=mse_loss(W_centroid_ori,W_centroid_new_,reduction='mean')
+                
+            if compute_appearance_loss:
+                loss['appearance_loss']=mse_loss(appearance_ori,appearance_new_,reduction='mean')
+        else:
+            loss={}
+            if compute_shape_loss:
+                loss['shape_loss']=mse_loss(shape_ori,shape_new,reduction='mean')
+            if compute_size_loss:
+                loss['size_loss']=mse_loss(size_ori,size_new,reduction='mean')
+            if compute_centroid_loss:
+                
+                loss['centroid_loss']=mse_loss(H_centroid_ori,H_centroid_new,reduction='mean')
+                #loss['centroid_loss'].requires_grad_(True)
+                loss['centroid_loss']+=mse_loss(W_centroid_ori,W_centroid_new,reduction='mean')
+                
+            if compute_appearance_loss:
+                loss['appearance_loss']=mse_loss(appearance_ori,appearance_new,reduction='mean')
+            # x=torch.rand(2,2,requires_grad=True)
    
-        y=x+2
+        # y=x+2
 
-        z=torch.sum(y)
+        # z=torch.sum(y)
         
-        get_grad=torch.autograd.grad(z,y)  # f对y求导
-        grad = torch.autograd.grad(loss['centroid_loss'],W_centroid_ori)[0]
+        # get_grad=torch.autograd.grad(z,y)  # f对y求导
+        # grad = torch.autograd.grad(loss['centroid_loss'],W_centroid_ori)[0]
 
         return loss
     
@@ -188,24 +208,40 @@ class SelfGuidanceCompute:
     def __call__(self,attention_store,activations,latents,first_as_target=True,centroid=None,size=None,shape=None,appearance=None):
         self.get_maps(attention_store)
         self.get_activations(activations)
+        torch.autograd.set_detect_anomaly(True)
+        #grad = torch.autograd.grad(self.target_maps.sum(), [latents])[0]
         loss_sum,loss=self.compute_loss(first_as_target,centroid,size,shape,appearance)
         #grad = torch.autograd.grad(loss['centroid_loss'].requires_grad_(True),centroid.requires_grad_(True))[0]
         
-        #grad = torch.autograd.grad(loss_sum.requires_grad_(True), [latents])[0]
+        grad = torch.autograd.grad(loss_sum.requires_grad_(True), [latents])[0]
+        loss_sum=0
+        #latents.zero_grad()
+        self.other_maps=None
+        self.target_maps=None
         return grad
 
 class SelfGuidanceEdit(AttentionControlEdit):
     def self_guidance_callback(self,index,latents,scheduler):
+        #return latents
         activations=None
+        timestep=index
+        prev_timestep = timestep - scheduler.config.num_train_timesteps // scheduler.num_inference_steps
+        variance = scheduler._get_variance(timestep, prev_timestep)
+        std_dev_t = 1 * variance ** (0.5)
         if True:
+            w=3
             grad=self.self_guidance_compute(self.attention_store,activations,latents)
-            latents = latents - grad * scheduler.sigmas[index] ** 2
+            
+            latents = latents - w*std_dev_t*grad  
+        self.attention_store={}
+        torch.cuda.empty_cache()
         return latents
     
     def replace_cross_attention(self, attn_base, att_replace):
         return att_replace
     
-
+    def replace_self_attention(self, attn_base, att_replace, place_in_unet):
+        return att_replace
     
     
     def __init__(self, prompts, num_steps: int, cross_replace_steps: float | Tuple[float, float] | Dict[str, Tuple[float, float]], self_replace_steps: float | Tuple[float, float], local_blend: LocalBlend | None,self_guidance_compute:SelfGuidanceCompute|None,self_guidance_weight=None):

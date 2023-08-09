@@ -27,6 +27,7 @@ MAX_NUM_WORDS = 77
 NUM_INNER_STEPS=30 #null text Inversion中每个step优化几次
 FP16=False
 HEATMAP=True #是否可视化heatmap
+USE_NEGATIVE_PROMPT=False
 device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
 ldm_stable=pipe
 try:
@@ -146,7 +147,13 @@ class AttentionControl(abc.ABC):
                 attn = self.forward(attn, is_cross, place_in_unet)
             else:
                 h = attn.shape[0]
-                attn[h // 2:] = self.forward(attn[h // 2:], is_cross, place_in_unet)
+                if hasattr(self,"self_guidance_callback"):
+                    _ = self.forward(attn[h // 2:] if USE_NEGATIVE_PROMPT else attn, is_cross, place_in_unet)
+                else:
+                    if USE_NEGATIVE_PROMPT:
+                        attn[h // 2:] = self.forward(attn[h // 2:], is_cross, place_in_unet)
+                    else:
+                        attn = self.forward(attn, is_cross, place_in_unet)
         self.cur_att_layer += 1
         if self.cur_att_layer == self.num_att_layers + self.num_uncond_att_layers:
             self.cur_att_layer = 0
@@ -235,7 +242,7 @@ class AttentionControlEdit(AttentionStore, abc.ABC):
 
     def forward(self, attn, is_cross: bool, place_in_unet: str):
         super(AttentionControlEdit, self).forward(attn, is_cross, place_in_unet)
-        if is_cross or (self.num_self_replace[0] <= self.cur_step < self.num_self_replace[1]):
+        if hasattr(self,"self_guidance_callback") is False and (is_cross or (self.num_self_replace[0] <= self.cur_step < self.num_self_replace[1])) :
             h = attn.shape[0] // (self.batch_size)
             attn = attn.reshape(self.batch_size, h, *attn.shape[1:])
             attn_base, attn_repalce = attn[0], attn[1:]
@@ -679,7 +686,7 @@ class NullInversion:
 null_inversion = NullInversion(ldm_stable)
 
 
-@torch.no_grad()
+#@torch.no_grad()
 def text2image_ldm_stable(
         model,
         prompt: List[str],

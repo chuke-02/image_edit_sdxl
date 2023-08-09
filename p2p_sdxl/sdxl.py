@@ -74,7 +74,7 @@ class sdxl(StableDiffusionXLPipeline):
         return latents
     
     @replace_example_docstring(EXAMPLE_DOC_STRING)
-    @torch.no_grad()
+    #@torch.no_grad()
     def __call__(
         self,
         controller=None,
@@ -102,7 +102,7 @@ class sdxl(StableDiffusionXLPipeline):
         crops_coords_top_left: Tuple[int, int] = (0, 0),
         target_size: Optional[Tuple[int, int]] = None,
         p2p=None,
-        same_init=False,
+        same_init=True,
         null_inversion=False,
         **kwargs
     ):
@@ -196,210 +196,222 @@ class sdxl(StableDiffusionXLPipeline):
         # -1. Controller
         if controller is not None:
             ptp_utils.register_attention_control(self, controller)
-        # 0. Default height and width to unet
-        height = height or self.default_sample_size * self.vae_scale_factor
-        width = width or self.default_sample_size * self.vae_scale_factor
+        with torch.no_grad():
+            # 0. Default height and width to unet
+            height = height or self.default_sample_size * self.vae_scale_factor
+            width = width or self.default_sample_size * self.vae_scale_factor
 
-        original_size = original_size or (height, width)
-        target_size = target_size or (height, width)
+            original_size = original_size or (height, width)
+            target_size = target_size or (height, width)
 
-        # 1. Check inputs. Raise error if not correct
-        if null_inversion is False:
-            self.check_inputs(
+            # 1. Check inputs. Raise error if not correct
+            if null_inversion is False:
+                self.check_inputs(
+                    prompt,
+                    height,
+                    width,
+                    callback_steps,
+                    negative_prompt,
+                    prompt_embeds,
+                    negative_prompt_embeds,
+                    pooled_prompt_embeds,
+                    negative_pooled_prompt_embeds,
+                )
+            else:
+                negative_pooled_prompt_embeds=[]
+                for negative_prompt_embeds_per_stage in negative_prompt_embeds:
+                    negative_pooled_prompt_embeds.append(negative_prompt_embeds_per_stage[:,0,768:])
+                self.check_inputs(
+                    prompt,
+                    height,
+                    width,
+                    callback_steps,
+                    negative_prompt,
+                    prompt_embeds,
+                    negative_prompt_embeds[0],
+                    pooled_prompt_embeds,
+                    negative_pooled_prompt_embeds,
+                )
+
+            # 2. Define call parameters
+            if prompt is not None and isinstance(prompt, str):
+                batch_size = 1
+            elif prompt is not None and isinstance(prompt, list):
+                batch_size = len(prompt)
+            else:
+                batch_size = prompt_embeds.shape[0]
+
+            device = self._execution_device
+
+            # here `guidance_scale` is defined analog to the guidance weight `w` of equation (2)
+            # of the Imagen paper: https://arxiv.org/pdf/2205.11487.pdf . `guidance_scale = 1`
+            # corresponds to doing no classifier free guidance.
+            do_classifier_free_guidance = guidance_scale > 1.0
+
+            # 3. Encode input prompt
+            text_encoder_lora_scale = (
+                cross_attention_kwargs.get("scale", None) if cross_attention_kwargs is not None else None
+            )
+            (
+                prompt_embeds,# 2,77,2048
+                negative_prompt_embeds,# 2,77,2048
+                pooled_prompt_embeds,# 2,1280
+                negative_pooled_prompt_embeds,# 2,1280
+            ) = self.encode_prompt(
                 prompt,
+                device,
+                num_images_per_prompt,
+                do_classifier_free_guidance,
+                negative_prompt,
+                prompt_embeds=prompt_embeds,
+                negative_prompt_embeds=negative_prompt_embeds,
+                pooled_prompt_embeds=pooled_prompt_embeds,
+                negative_pooled_prompt_embeds=negative_pooled_prompt_embeds,
+                lora_scale=text_encoder_lora_scale,
+            )
+
+            # 4. Prepare timesteps
+            self.scheduler.set_timesteps(num_inference_steps, device=device)
+
+            timesteps = self.scheduler.timesteps
+
+            # 5. Prepare latent variables
+            num_channels_latents = self.unet.config.in_channels
+            latents = self.prepare_latents(#2,4,64,64
+                batch_size * num_images_per_prompt,
+                num_channels_latents,
                 height,
                 width,
-                callback_steps,
-                negative_prompt,
-                prompt_embeds,
-                negative_prompt_embeds,
-                pooled_prompt_embeds,
-                negative_pooled_prompt_embeds,
+                prompt_embeds.dtype,
+                device,
+                generator,
+                latents,
+                same_init=same_init
             )
-        else:
-            negative_pooled_prompt_embeds=[]
-            for negative_prompt_embeds_per_stage in negative_prompt_embeds:
-                negative_pooled_prompt_embeds.append(negative_prompt_embeds_per_stage[:,0,768:])
-            self.check_inputs(
-                prompt,
-                height,
-                width,
-                callback_steps,
-                negative_prompt,
-                prompt_embeds,
-                negative_prompt_embeds[0],
-                pooled_prompt_embeds,
-                negative_pooled_prompt_embeds,
+            latent_store=latents[0].clone().detach()
+            # 6. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
+            extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
+
+            # 7. Prepare added time ids & embeddings
+            add_text_embeds = pooled_prompt_embeds
+            add_time_ids = self._get_add_time_ids(
+                original_size, crops_coords_top_left, target_size, dtype=prompt_embeds.dtype
             )
 
-        # 2. Define call parameters
-        if prompt is not None and isinstance(prompt, str):
-            batch_size = 1
-        elif prompt is not None and isinstance(prompt, list):
-            batch_size = len(prompt)
-        else:
-            batch_size = prompt_embeds.shape[0]
-
-        device = self._execution_device
-
-        # here `guidance_scale` is defined analog to the guidance weight `w` of equation (2)
-        # of the Imagen paper: https://arxiv.org/pdf/2205.11487.pdf . `guidance_scale = 1`
-        # corresponds to doing no classifier free guidance.
-        do_classifier_free_guidance = guidance_scale > 1.0
-
-        # 3. Encode input prompt
-        text_encoder_lora_scale = (
-            cross_attention_kwargs.get("scale", None) if cross_attention_kwargs is not None else None
-        )
-        (
-            prompt_embeds,# 2,77,2048
-            negative_prompt_embeds,# 2,77,2048
-            pooled_prompt_embeds,# 2,1280
-            negative_pooled_prompt_embeds,# 2,1280
-        ) = self.encode_prompt(
-            prompt,
-            device,
-            num_images_per_prompt,
-            do_classifier_free_guidance,
-            negative_prompt,
-            prompt_embeds=prompt_embeds,
-            negative_prompt_embeds=negative_prompt_embeds,
-            pooled_prompt_embeds=pooled_prompt_embeds,
-            negative_pooled_prompt_embeds=negative_pooled_prompt_embeds,
-            lora_scale=text_encoder_lora_scale,
-        )
-
-        # 4. Prepare timesteps
-        self.scheduler.set_timesteps(num_inference_steps, device=device)
-
-        timesteps = self.scheduler.timesteps
-
-        # 5. Prepare latent variables
-        num_channels_latents = self.unet.config.in_channels
-        latents = self.prepare_latents(#2,4,64,64
-            batch_size * num_images_per_prompt,
-            num_channels_latents,
-            height,
-            width,
-            prompt_embeds.dtype,
-            device,
-            generator,
-            latents,
-            same_init=same_init
-        )
-        latent_store=latents[0].clone().detach()
-        # 6. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
-        extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
-
-        # 7. Prepare added time ids & embeddings
-        add_text_embeds = pooled_prompt_embeds
-        add_time_ids = self._get_add_time_ids(
-            original_size, crops_coords_top_left, target_size, dtype=prompt_embeds.dtype
-        )
-
-        if do_classifier_free_guidance:
-            if isinstance(negative_prompt_embeds,List) is False:
-                all_prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
-                all_add_text_embeds = torch.cat([negative_pooled_prompt_embeds, add_text_embeds], dim=0)
-                all_prompt_embeds = all_prompt_embeds.to(device)
-                all_add_text_embeds = all_add_text_embeds.to(device)
-            add_time_ids = torch.cat([add_time_ids, add_time_ids], dim=0)
+            if do_classifier_free_guidance:
+                if isinstance(negative_prompt_embeds,List) is False:
+                    all_prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
+                    all_add_text_embeds = torch.cat([negative_pooled_prompt_embeds, add_text_embeds], dim=0)
+                    all_prompt_embeds = all_prompt_embeds.to(device)
+                    all_add_text_embeds = all_add_text_embeds.to(device)
+                add_time_ids = torch.cat([add_time_ids, add_time_ids], dim=0)
 
 
-        add_time_ids = add_time_ids.to(device).repeat(batch_size * num_images_per_prompt, 1)
+            add_time_ids = add_time_ids.to(device).repeat(batch_size * num_images_per_prompt, 1)
 
         # 8. Denoising loop
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
-                if isinstance(negative_prompt_embeds,List):
-                    if do_classifier_free_guidance:
-                        all_prompt_embeds = torch.cat([negative_prompt_embeds[i].repeat(2,1,1), prompt_embeds], dim=0)
-                        all_prompt_embeds = all_prompt_embeds.to(device)
-                        all_add_text_embeds = torch.cat([negative_pooled_prompt_embeds[i].repeat(2,1), add_text_embeds], dim=0)
-                        all_add_text_embeds = all_add_text_embeds.to(device)
-                if controller is not None and hasattr(controller,"self_guidance_callback"): # self guidance
-                    latents = latents.requires_grad_(True)
+
                 # expand the latents if we are doing classifier free guidance
                 latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
 
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
-   
+                if  controller is not None and hasattr(controller,"self_guidance_callback") and i<20 and i>=10:
+                    self.unet.zero_grad()
+                    #latents = latents.requires_grad_(True)
+                    get_single=[2,3]
+                    added_cond_kwargs = {"text_embeds": all_add_text_embeds[get_single], "time_ids": add_time_ids[get_single]}
+                    latent_model_input_single=latent_model_input[get_single]
+                    latent_model_input_single=latent_model_input_single.requires_grad_(True)
+                    noise_pred = self.unet(
+                        latent_model_input_single,
+                        t,
+                        encoder_hidden_states=all_prompt_embeds[get_single],
+                        cross_attention_kwargs=cross_attention_kwargs,
+                        added_cond_kwargs=added_cond_kwargs,
+                        return_dict=False,
+                    )[0]
+                    latent_model_input[get_single[0]]=controller.self_guidance_callback(t,latent_model_input_single,self.scheduler)[0]
+                    latents[0]=latent_model_input[get_single[0]]
                 # predict the noise residual
-                added_cond_kwargs = {"text_embeds": all_add_text_embeds, "time_ids": add_time_ids}
-                noise_pred = self.unet(
-                    latent_model_input,
-                    t,
-                    encoder_hidden_states=all_prompt_embeds,
-                    cross_attention_kwargs=cross_attention_kwargs,
-                    added_cond_kwargs=added_cond_kwargs,
-                    return_dict=False,
-                )[0]
-                if  controller is not None and hasattr(controller,"self_guidance_callback"):
-                    latents=controller.self_guidance_callback(t,latents,self.scheduler)
-                    latents.zero_grad()
-                    latents = latents.requires_grad_(False)
-                kwargs.update(extra_step_kwargs)
-                latents=exec_classifier_free_guidance(self,
-                                                      latents,
-                                                      controller,
-                                                      t,
-                                                      guidance_scale,
-                                                      do_classifier_free_guidance,
-                                                      noise_pred,
-                                                      guidance_rescale,
-                                                      i=i,
-                                                      **kwargs)
+                torch.cuda.empty_cache()
+                with torch.no_grad():
+                    added_cond_kwargs = {"text_embeds": all_add_text_embeds, "time_ids": add_time_ids}
+                    noise_pred = self.unet(
+                        latent_model_input,
+                        t,
+                        encoder_hidden_states=all_prompt_embeds,
+                        cross_attention_kwargs=cross_attention_kwargs,
+                        added_cond_kwargs=added_cond_kwargs,
+                        return_dict=False,
+                    )[0]
 
 
-                # call the callback, if provided
-                if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
-                    progress_bar.update()
-                    if callback is not None and i % callback_steps == 0:
-                        callback(i, t, latents)
+                    kwargs.update(extra_step_kwargs)
+                    latents=exec_classifier_free_guidance(self,
+                                                        latents,
+                                                        controller,
+                                                        t,
+                                                        guidance_scale,
+                                                        do_classifier_free_guidance,
+                                                        noise_pred,
+                                                        guidance_rescale,
+                                                        i=i,
+                                                        **kwargs)
 
+                    
+                    # call the callback, if provided
+                    if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
+                        progress_bar.update()
+                        if callback is not None and i % callback_steps == 0:
+                            callback(i, t, latents)
+
+
+        with torch.no_grad():
         # make sure the VAE is in float32 mode, as it overflows in float16
-        self.vae.to(dtype=torch.float32)
+            self.vae.to(dtype=torch.float32)
 
-        use_torch_2_0_or_xformers = isinstance(
-            self.vae.decoder.mid_block.attentions[0].processor,
-            (
-                AttnProcessor2_0,
-                XFormersAttnProcessor,
-                LoRAXFormersAttnProcessor,
-                LoRAAttnProcessor2_0,
-            ),
-        )
-        # if xformers or torch_2_0 is used attention block does not need
-        # to be in float32 which can save lots of memory
-        if use_torch_2_0_or_xformers:
-            self.vae.post_quant_conv.to(latents.dtype)
-            self.vae.decoder.conv_in.to(latents.dtype)
-            self.vae.decoder.mid_block.to(latents.dtype)
-        else:
-            latents = latents.float()
+            use_torch_2_0_or_xformers = isinstance(
+                self.vae.decoder.mid_block.attentions[0].processor,
+                (
+                    AttnProcessor2_0,
+                    XFormersAttnProcessor,
+                    LoRAXFormersAttnProcessor,
+                    LoRAAttnProcessor2_0,
+                ),
+            )
+            # if xformers or torch_2_0 is used attention block does not need
+            # to be in float32 which can save lots of memory
+            if use_torch_2_0_or_xformers:
+                self.vae.post_quant_conv.to(latents.dtype)
+                self.vae.decoder.conv_in.to(latents.dtype)
+                self.vae.decoder.mid_block.to(latents.dtype)
+            else:
+                latents = latents.float()
 
-        if not output_type == "latent":
-            image = self.vae.decode(latents / self.vae.config.scaling_factor, return_dict=False)[0]
-        else:
-            image = latents
-            return StableDiffusionXLPipelineOutput(images=image)
+            if not output_type == "latent":
+                image = self.vae.decode(latents / self.vae.config.scaling_factor, return_dict=False)[0]
+            else:
+                image = latents
+                return StableDiffusionXLPipelineOutput(images=image)
 
-        image = self.watermark.apply_watermark(image)
-        image = self.image_processor.postprocess(image, output_type=output_type)
+            image = self.watermark.apply_watermark(image)
+            image = self.image_processor.postprocess(image, output_type=output_type)
 
-        # Offload last model to CPU
-        if hasattr(self, "final_offload_hook") and self.final_offload_hook is not None:
-            self.final_offload_hook.offload()
+            # Offload last model to CPU
+            if hasattr(self, "final_offload_hook") and self.final_offload_hook is not None:
+                self.final_offload_hook.offload()
 
-        if p2p is True:
-            return image,latent_store
-        if not return_dict:
-            return (image,)
+            if p2p is True:
+                return image,latent_store
+            if not return_dict:
+                return (image,)
 
         return StableDiffusionXLPipelineOutput(images=image)
-    
+    @torch.no_grad()
     def encode_prompt(
         self,
         prompt,
@@ -850,6 +862,7 @@ def dilate(image, kernel_size, stride=1, padding=0):
     
     return dilated_image
 
+@torch.no_grad()
 def exec_classifier_free_guidance(model,latents,controller,t,guidance_scale,
                                   do_classifier_free_guidance,noise_pred,guidance_rescale,
                                   prox=None, quantile=0.75,image_enc=None, recon_lr=0.1, recon_t=400,
@@ -939,5 +952,6 @@ def exec_classifier_free_guidance(model,latents,controller,t,guidance_scale,
     # controller
     if controller is not None:
         latents = controller.step_callback(latents)
-        
+        controller.reset()
+        torch.cuda.empty_cache()
     return latents.to(model.unet.dtype)

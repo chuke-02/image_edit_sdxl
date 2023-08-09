@@ -22,7 +22,7 @@ if branch==1:
     g_cpu = torch.Generator().manual_seed(123)
     cross_replace_steps = {'default_': .3,}
     self_replace_steps = .2
-    controller = make_self_guidance_controller(prompts, "cat",ldm_stable,mode="right",value=0.3)
+    controller = make_self_guidance_controller(prompts, "cat",ldm_stable,mode="up",value=0.3)
     images, _ = run_and_display(prompts, controller, run_baseline=False, latent=None, uncond_embeddings=None,pooled_uncond_embeddings=None,use_old=False,one_img=False,generator=g_cpu,null_inversion=False,
                                 inversion_guidance=False,x_stars=None)
     # controller = make_controller(prompts, True, cross_replace_steps, self_replace_steps,blend_word,eq_params)
