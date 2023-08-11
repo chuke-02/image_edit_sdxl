@@ -3,7 +3,7 @@ import torch
 import ptp_utils
 from run_ptp_utils import AttentionReplace,run_and_display,NUM_DDIM_STEPS,make_controller,null_inversion,EmptyControl,ldm_stable
 import time
-branch =16
+branch =3
 
 if branch==1:#弃用
     prompts = ["A painting of a squirrel eating a burger",
@@ -28,31 +28,41 @@ elif branch==2:#弃用
     self_replace_steps = .4
     blend_word = ((('bicycle',), ("motorcycle",))) # for local edit. If it is not local yet - use only the source object: blend_word = ((('cat',), ("cat",))).
     eq_params = {"words": ("motorcycle",), "values": (1,)}
-    controller = make_controller(prompts, True, cross_replace_steps, self_replace_steps,blend_word,eq_params)
+    controller = make_controller(prompts, False, cross_replace_steps, self_replace_steps,blend_word,eq_params)
     images, _ = run_and_display(prompts, controller, run_baseline=False, latent=x_t, uncond_embeddings=uncond_embeddings,use_old=False,one_img=False,generator=g_cpu,null_inversion=True)
     ptp_utils.view_images([image_gt, image_enc, images[0]],text="null")
 elif branch==3:
-    target="train"
-    image_path = "./example_images/cat.png"
-    prompt = "Photo of a cat riding on a bicycle"
+    target="green"
+    image_path = "./example_images/dogc.jpg"
+    prompt = "A cat is sitting in a pile of watermelons in the trunk"
     (image_gt, image_enc), x_t,x_stars, prompt_embeds,pooled_prompt_embeds = null_inversion.invert(image_path, prompt, offsets=(0,0,0,0), verbose=True,train_free=True,all_latents=True)
     #train_free为True时用Negative prompt Inversion（速度快，效果不完美），为False时用Null Text Inversion（要训练uncond_embeddings，所以速度慢、效果好，但是有bug）
-    prompts = ["Photo of a cat riding on a bicycle", #prompt和prompts[0]要完全一致，否则重建会出问题。句子最后不加句号。
-            f"Photo of a cat riding on a {target}"]
+    prompts = ["a photo of dog running in gray forest",
+            "a photo of dog running in green forest"]
     g_cpu = torch.Generator().manual_seed(12345)
     cross_replace_steps = {'default_': .3,}
     self_replace_steps = .2
-    blend_word = ((('bicycle',), (f"{target}",))) # for local edit. If it is not local yet - use only the source object: blend_word = ((('cat',), ("cat",))).
+    blend_word = ((('trunk',), (f"{target}",))) # for local edit. If it is not local yet - use only the source object: blend_word = ((('cat',), ("cat",))).
     eq_params = {"words": (f"{target}",), "values": (2,)}
-    controller = make_controller(prompts, True, cross_replace_steps, self_replace_steps,blend_word,eq_params)
+    controller = make_controller(prompts, False, cross_replace_steps, self_replace_steps,blend_word,eq_params)
     images, _ = run_and_display(prompts, controller, run_baseline=False, latent=x_t, uncond_embeddings=prompt_embeds,pooled_uncond_embeddings=pooled_prompt_embeds,use_old=False,one_img=False,generator=g_cpu,null_inversion=False,
                                 inversion_guidance=False,x_stars=x_stars)
-    controller = make_controller(prompts, True, cross_replace_steps, self_replace_steps,blend_word,eq_params)
+    controller = make_controller(prompts, False, cross_replace_steps, self_replace_steps,blend_word,eq_params)
     images_new, _ = run_and_display(prompts, controller, run_baseline=False, latent=x_t, uncond_embeddings=prompt_embeds,pooled_uncond_embeddings=pooled_prompt_embeds,use_old=False,one_img=False,generator=g_cpu,null_inversion=False,
                                 inversion_guidance=True,x_stars=x_stars)
+    
+    controller = make_controller(prompts, False, cross_replace_steps, self_replace_steps,blend_word,eq_params)
+    images_new_mask, _ = run_and_display(prompts, controller, run_baseline=False, latent=x_t, uncond_embeddings=prompt_embeds,pooled_uncond_embeddings=pooled_prompt_embeds,use_old=False,one_img=False,generator=g_cpu,null_inversion=False,
+                                inversion_guidance=True,x_stars=x_stars,use_localblend_mask=True)
     #run_and_display默认会保存生成的图片，在img/下
     #如果用Null Text Inversion要设置null_inversion=True，然而这个功能有bug，所以设置null_inversion=False就好
     ptp_utils.view_images([image_gt,  images[0],images_new[0]],text="null",Notimestamp=False)#保存一张图，左中右分别为：原图，VAE Decode后的图，重建的图
+    grid_dict={"x_title":"","y_title":"","font_size":100}
+    grid_dict["x_text_list"]=['NPI','proxNPI','proxNPI\n+LocalBlendmask']
+    grid_dict["y_text_list"]=['reconstruction','edited image']
+    grid_dict['title']=prompts
+    grid_dict['shift_y']=-300,0
+    ptp_utils.view_images([images[0],images_new[0],images_new_mask[0],images[1],images_new[1],images_new_mask[1]],num_rows=2,text="cmp",grid_dict=grid_dict)
 elif branch==4:
     target="ship"
     prompts = ["Photo of a white cat riding on a little bicycle",

@@ -1,7 +1,7 @@
 import torch
 from typing import Optional, Union, Tuple, List, Callable, Dict
 from tqdm.notebook import tqdm
-from diffusers import StableDiffusionPipeline, DDIMScheduler
+from diffusers import StableDiffusionPipeline, DDIMScheduler,DDIMInverseScheduler,DPMSolverMultistepInverseScheduler
 import torch.nn.functional as nnf
 import numpy as np
 import abc
@@ -26,7 +26,7 @@ GUIDANCE_SCALE = 7.5
 MAX_NUM_WORDS = 77
 NUM_INNER_STEPS=30 #null text Inversion中每个step优化几次
 FP16=False
-HEATMAP=True #是否可视化heatmap
+HEATMAP=False #是否可视化heatmap
 device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
 ldm_stable=pipe
 try:
@@ -72,6 +72,7 @@ class LocalBlend:
 
     def __call__(self, x_t, attention_store):
         self.counter += 1
+        self.mask=None
         if self.counter > self.start_blend:
             # 40,1024,77
             maps = attention_store["down_cross"][10:] + attention_store["up_cross"][:10]#20个down,10个mid,30个up,v1.4中为4,1,6
@@ -83,6 +84,7 @@ class LocalBlend:
                 mask = mask * maps_sub
             mask = mask.float().to(x_t.dtype)
             x_t = x_t[:1] + mask * (x_t - x_t[:1])
+            self.mask=mask
         return x_t
 
     def __init__(self, prompts: List[str], words, substruct_words=None, start_blend=0.2,

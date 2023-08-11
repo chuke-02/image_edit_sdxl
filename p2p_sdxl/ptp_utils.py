@@ -131,13 +131,22 @@ def draw_axis(img,grid_dict,x_len,y_len):
             shift_y_x,shift_y_y=grid_dict['shift_y']
         else:
             shift_y_x=shift_y_y=0
+        if "title" in grid_dict:
+            title=grid_dict['title']
+            if isinstance(title,List):
+                all_title=""
+                for s in title:
+                    all_title=all_title+s+"\n"
+                title=all_title
+        else:
+            title=''
         width, height = img.size
         num_x=x_len
         num_y=y_len
         #color_x="black"
         #color_y="black"
         
-        new_img = Image.new("RGB", (width + width // num_x, height + height // num_y), color=(255, 255, 255))
+        new_img = Image.new("RGB", (width + width // num_x+width // (num_x*2), height + height // num_y+height // (num_y*2)), color=(255, 255, 255))
         width,height=(width + width // num_x, height + height // num_y)
         num_x=num_x+1
         num_y=num_y+1
@@ -170,6 +179,13 @@ def draw_axis(img,grid_dict,x_len,y_len):
         x = width // (num_x * 2)+width *0.2// num_x+shift_x_x
         y = (i - 1) * height // num_y + height // (num_y * 2)+shift_x_y
         draw.text((x, y), x_title, font=font, fill=color_x,align="center")
+        x = width // 4
+        y = (i - 1) * height // num_y + height // (num_y * 10)
+        draw.text((x, y), title, font=font, fill='blue',align="left")
+        # ret_img = Image.new("RGB", (width + width // (num_x*2),
+        #                              height + height // (num_y*2)), color=(255, 255, 255))
+        # ret_img.paste(new_img, (0,0))
+        # new_img=ret_img
     else:
         #print("grid_dict格式错误,跳过图例的生成")
         new_img=img

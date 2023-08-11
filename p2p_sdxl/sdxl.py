@@ -846,8 +846,10 @@ def dilate(image, kernel_size, stride=1, padding=0):
 
 def exec_classifier_free_guidance(model,latents,controller,t,guidance_scale,
                                   do_classifier_free_guidance,noise_pred,guidance_rescale,
-                                  prox=None, quantile=0.75,image_enc=None, recon_lr=0.1, recon_t=400,
-                                  inversion_guidance=False, reconstruction_guidance=False,x_stars=None, i=0, **kwargs):
+                                  prox=None, quantile=0.75,image_enc=None, recon_lr=0.1, recon_t=400,recon_end_t=0,
+                                  inversion_guidance=False, reconstruction_guidance=False,x_stars=None, i=0,
+                                    use_localblend_mask=False,
+                                  save_heatmap=True,**kwargs):
     # perform guidance
     if do_classifier_free_guidance:
         noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
@@ -879,7 +881,7 @@ def exec_classifier_free_guidance(model,latents,controller,t,guidance_scale,
                     import matplotlib.pyplot as plt
 
                     mask_edit = (score_delta.abs() > threshold).float()
-                    if i%10==0:
+                    if save_heatmap and i%10==0:
                         for kk in range(4):
                             # sns.heatmap(score_delta_norm[1][kk].clone().cpu(), cmap='coolwarm')
                             # plt.savefig(f'./vis/heatmap1_inversion_{i}_{kk}.png')
@@ -888,15 +890,15 @@ def exec_classifier_free_guidance(model,latents,controller,t,guidance_scale,
                             # plt.savefig(f'./vis/heatmap1_inversion_old_{i}_{kk}.png')
                             # plt.clf()
                             sns.heatmap(mask_edit[1][kk].clone().cpu(), cmap='coolwarm')
-                            plt.savefig(f'./vis/heatmap1_mask_old_no_dilate_{i}_{kk}.png')
+                            plt.savefig(f'./vis/prox_inv/heatmap1_mask_{i}_{kk}.png')
                             plt.clf()
                     if kwargs.get('dilate_mask', 2) > 0:
                         radius = int(kwargs.get('dilate_mask', 2))
                         mask_edit = dilate(mask_edit.float(), kernel_size=2*radius+1, padding=radius)
-                    if i%10==0:
+                    if save_heatmap and i%10==0:
                         for kk in range(4):
                             sns.heatmap(mask_edit[1][kk].clone().cpu(), cmap='coolwarm')
-                            plt.savefig(f'./vis/heatmap1_mask_old_dilate_{i}_{kk}.png')
+                            plt.savefig(f'./vis/prox_inv/heatmap1_mask_dilate_{i}_{kk}.png')
                             plt.clf()
                     step_kwargs['recon_mask'] = 1 - mask_edit
             elif prox == 'l0':
@@ -926,8 +928,21 @@ def exec_classifier_free_guidance(model,latents,controller,t,guidance_scale,
     if reconstruction_guidance:
         kwargs.update(step_kwargs)
     latents = model.scheduler.step(noise_pred, t, latents, **kwargs, return_dict=False)[0]
-    if mask_edit is not None and inversion_guidance and (recon_t > 0 and t < recon_t) or (recon_t < 0 and t > -recon_t):
-        recon_mask = 1 - mask_edit
+    if mask_edit is not None and inversion_guidance and (recon_t > recon_end_t and t < recon_t) or (recon_t < recon_end_t and t > -recon_t):
+        if use_localblend_mask:
+            assert hasattr(controller,"local_blend")
+            if save_heatmap and i%10==0:
+                sns.heatmap(controller.local_blend.mask[0][0].clone().cpu(), cmap='coolwarm')
+                plt.savefig(f'./vis/prox_inv/heatmap0_localblendmask_{i}.png')
+                plt.clf()
+                sns.heatmap(controller.local_blend.mask[1][0].clone().cpu(), cmap='coolwarm')
+                plt.savefig(f'./vis/prox_inv/heatmap1_localblendmask_{i}.png')
+                plt.clf()
+            local_blend_mask=controller.local_blend.mask.float()
+            local_blend_mask[0]=local_blend_mask[1]
+            recon_mask=1-local_blend_mask.expand_as(latents)
+        else:
+            recon_mask = 1 - mask_edit
         latents = latents - recon_lr * (latents - x_stars[len(x_stars)-i-2].expand_as(latents)) * recon_mask
 
     # controller
