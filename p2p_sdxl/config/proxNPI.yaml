@@ -1,0 +1,15 @@
+model:
+  prompts:
+    - "Photo of a cat riding on a bicycle"
+    - "Photo of a cat riding on a motorcycle"
+  image_path: "example_images/cat_bike3.jpg" #未给出image_path时不使用inversion
+  inv_mode: "proxNPI"
+localblend:
+  mask_threshold: 0.6
+  blend_word: 
+    - ["bicycle"]
+    - ["motorcycle"]
+  eq_params:
+    - motorcycle: 1
+seed: 12345
+$ref: 'config/base.yaml#/'

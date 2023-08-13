@@ -1,0 +1,15 @@
+model:
+  guidance_scale : 7.5
+  num_ddim_steps : 50
+  model_path : "/stable-diffusion-xl-base-1.0"
+  model_dtype : "fp16"
+ptp:
+  self_replace_steps : 0.2
+  cross_replace_steps : 0.3
+localblend:
+  start_blend: 0.2
+  mask_threshold=0.5
+
+
+
+
