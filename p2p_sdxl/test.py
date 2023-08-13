@@ -36,7 +36,7 @@ run_ptp(
 run_ptp(
     prompts=["Photo of a cat riding on a little bicycle",
             "Photo of a cat riding on a little motorcycle"],
-    image_path="./example_images/cat_bike4.jpg",
+    image_path="./example_images/cat_bike3.jpg",
     inv_mode="proxNPI",
     self_replace_steps = .2,
     cross_replace_steps=.3,
@@ -55,7 +55,7 @@ run_ptp(
 run_ptp(
     prompts=["Photo of a cat riding on a little bicycle",
             "Photo of a cat riding on a little motorcycle"],
-    image_path="./example_images/cat_bike4.jpg",
+    image_path="./example_images/cat_bike3.jpg",
     inv_mode="NPI", #NPI为Negative Prompt Inversion，proxNPI为Proximal Inversion
     self_replace_steps = .2, #开始替换自注意力的step
     cross_replace_steps=.3, #开始替换交叉的step
