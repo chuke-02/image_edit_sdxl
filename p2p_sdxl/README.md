@@ -1,6 +1,6 @@
 # p2p_sdxl
 test.py
-
+最后一段代码里有注释
 ptp
 
 ```python
