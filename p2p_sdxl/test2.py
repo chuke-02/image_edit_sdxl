@@ -1,42 +1,10 @@
 from utils.run_ptp_utils import run_ptp
-import yaml
-
-# 1.ptp
-run_ptp(
-    prompts=["Photo of a cat riding on a little bicycle",
-            "Photo of a cat riding on a little motorcycle"],
-    self_replace_steps = .2,
-    cross_replace_steps=.3,
-    eq_params = {"words": ("motorcycle",), "values": (1,)},
-    seed=12345,
-    num_ddim_steps=50,
-    guidance_scale=7.5,
-    use_replace=False,
-    model_path="/stable-diffusion-xl-base-1.0"
-)
-
-# 2.ptp+localblend
-run_ptp(
-    prompts=["Photo of a cat riding on a little bicycle",
-            "Photo of a cat riding on a little motorcycle"],
-    self_replace_steps = .2,
-    cross_replace_steps=.3,
-    blend_word = ((('bicycle',), ("motorcycle",))) ,
-    eq_params = {"words": ("motorcycle",), "values": (1,)},
-    seed=12345,
-    num_ddim_steps=50,
-    guidance_scale=7.5,
-    mask_threshold=0.4,
-    start_blend=0.2,
-    use_replace=False,
-    model_path="/stable-diffusion-xl-base-1.0"
-)
 
 # 3.真实图片编辑(Proximal Inversion)+ptp+localblend
 run_ptp(
     prompts=["Photo of a cat riding on a little bicycle",
             "Photo of a cat riding on a little motorcycle"],
-    image_path="./example_images/cat_bike4.jpg",
+    image_path="./example_images/cat.png",
     inv_mode="proxNPI",
     self_replace_steps = .2,
     cross_replace_steps=.3,
@@ -47,15 +15,14 @@ run_ptp(
     guidance_scale=7.5,
     mask_threshold=0.4,
     start_blend=0.2,
-    use_replace=False,
-    model_path="/stable-diffusion-xl-base-1.0"
+    use_replace=False
 )
 
 # 4.真实图片编辑(Negative Prompt Inversion)+ptp+localblend
 run_ptp(
     prompts=["Photo of a cat riding on a little bicycle",
             "Photo of a cat riding on a little motorcycle"],
-    image_path="./example_images/cat_bike4.jpg",
+    image_path="./example_images/cat.png",
     inv_mode="NPI", #NPI为Negative Prompt Inversion，proxNPI为Proximal Inversion
     self_replace_steps = .2, #开始替换自注意力的step
     cross_replace_steps=.3, #开始替换交叉的step
@@ -66,8 +33,5 @@ run_ptp(
     guidance_scale=7.5, # 去噪时的CFG(加噪时的CFG为1)
     mask_threshold=0.4,  # localblend确定mask时使用的阈值
     start_blend=0.2, # 从20%的step开始使用localblend
-    use_replace=False, # 使用refine,而非replace
-    model_path="/stable-diffusion-xl-base-1.0"
+    use_replace=False # 使用refine,而非replace
 )
-
-

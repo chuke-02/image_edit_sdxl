@@ -1,5 +1,6 @@
 # p2p_sdxl
-以下代码在test.py中。
+(还需要调整)
+以下代码在test.py中。  
 最后一段代码里有注释。  
 ptp:
 
@@ -13,7 +14,8 @@ run_ptp(
     seed=12345,
     num_ddim_steps=50,
     guidance_scale=7.5,
-    use_replace=False
+    use_replace=False,
+    model_path="/stable-diffusion-xl-base-1.0"
 )
 ```
 
@@ -34,7 +36,8 @@ run_ptp(
     guidance_scale=7.5,
     mask_threshold=0.4,
     start_blend=0.2,
-    use_replace=False
+    use_replace=False,
+    model_path="/stable-diffusion-xl-base-1.0"
 )
 ```
 ![img](markdown/img_2023-08-13_10-56-53.jpg)
@@ -54,7 +57,8 @@ run_ptp(
     guidance_scale=7.5,
     mask_threshold=0.4,
     start_blend=0.2,
-    use_replace=False
+    use_replace=False,
+    model_path="/stable-diffusion-xl-base-1.0"
 )
 ```
 ![img](markdown/img_2023-08-13_10-57-22.jpg)
@@ -74,7 +78,8 @@ run_ptp(
     guidance_scale=7.5, # 去噪时的CFG(加噪时的CFG为1)
     mask_threshold=0.4,  # localblend确定mask时使用的阈值
     start_blend=0.2, # 从20%的step开始使用localblend
-    use_replace=False # 使用refine,而非replace
+    use_replace=False, # 使用refine,而非replace
+    model_path="/stable-diffusion-xl-base-1.0"
 )
 ```
 ![img](markdown/img_2023-08-13_10-57-50.jpg)
