@@ -1,7 +1,7 @@
 # p2p_sdxl
-test.py
-最后一段代码里有注释
-ptp
+以下代码在test.py中。
+最后一段代码里有注释。
+ptp:
 
 ```python
 run_ptp(
@@ -19,7 +19,7 @@ run_ptp(
 
 ![img](markdown/img_2023-08-13_10-56-31.jpg)
 
-ptp+localblend
+ptp+localblend:
 
 ```python
 run_ptp(
@@ -38,7 +38,7 @@ run_ptp(
 )
 ```
 ![img](markdown/img_2023-08-13_10-56-53.jpg)
-真实图片编辑(Proximal Inversion)+ptp+localblend
+真实图片编辑(Proximal Inversion)+ptp+localblend:
 ```python
 run_ptp(
     prompts=["Photo of a cat riding on a little bicycle",
@@ -58,7 +58,7 @@ run_ptp(
 )
 ```
 ![img](markdown/img_2023-08-13_10-57-22.jpg)
-4.真实图片编辑(Negative Prompt Inversion)+ptp+localblend
+4.真实图片编辑(Negative Prompt Inversion)+ptp+localblend:
 ```python
 run_ptp(
     prompts=["Photo of a cat riding on a little bicycle",
