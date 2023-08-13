@@ -1,12 +1,12 @@
 # p2p_sdxl
 以下代码在test.py中。
-最后一段代码里有注释。
+最后一段代码里有注释。  
 ptp:
 
 ```python
 run_ptp(
-    prompts=["Photo of a cat riding on a bicycle",
-            "Photo of a cat riding on a motorcycle"],
+    prompts=["Photo of a cat riding on a little bicycle",
+            "Photo of a cat riding on a little motorcycle"],
     self_replace_steps = .2,
     cross_replace_steps=.3,
     eq_params = {"words": ("motorcycle",), "values": (1,)},
@@ -23,8 +23,8 @@ ptp+localblend:
 
 ```python
 run_ptp(
-    prompts=["Photo of a cat riding on a bicycle",
-            "Photo of a cat riding on a motorcycle"],
+    prompts=["Photo of a cat riding on a little bicycle",
+            "Photo of a cat riding on a little motorcycle"],
     self_replace_steps = .2,
     cross_replace_steps=.3,
     blend_word = ((('bicycle',), ("motorcycle",))) ,
