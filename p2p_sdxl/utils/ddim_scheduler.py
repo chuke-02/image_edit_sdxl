@@ -5,7 +5,7 @@ from typing import List, Optional, Tuple, Union
 
 import torch
 from typing import List, Optional, Tuple, Union
-from diffusers import DDIMScheduler
+
 from diffusers.schedulers.scheduling_ddim import DDIMScheduler, DDIMSchedulerOutput
 from diffusers.utils import BaseOutput, randn_tensor
 

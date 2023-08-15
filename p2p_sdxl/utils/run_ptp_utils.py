@@ -19,7 +19,13 @@ from utils.ddim_scheduler import DDIMSchedulerDev
 LOW_RESOURCE = False
 MAX_NUM_WORDS = 77
 HEATMAP=False #是否可视化heatmap
+MASK_FILE=False
 
+def get_mask_file():
+    mask=load_1024_mask("example_images/dog_dog_mask.jpg")
+    mask=mask//255
+    mask=torch.from_numpy(mask).unsqueeze(0)
+    return mask
 class LocalBlend:
 
     def get_mask(self, maps, alpha, use_pool,x_t):
@@ -42,21 +48,27 @@ class LocalBlend:
         mask = mask[:1] + mask
         return mask
 
+
     def __call__(self, x_t, attention_store):
         self.counter += 1
         self.mask=None
         if self.counter > self.start_blend:
             # 40,1024,77
-            maps = attention_store["down_cross"][10:] + attention_store["up_cross"][:10]#20个down,10个mid,30个up,v1.4中为4,1,6
-            maps = [item.reshape(self.alpha_layers.shape[0], -1, 1, 32, 32, MAX_NUM_WORDS) for item in maps]#原来是16,16
-            maps = torch.cat(maps, dim=1)
-            mask = self.get_mask(maps, self.alpha_layers, True,x_t)
-            if self.substruct_layers is not None:
-                maps_sub = ~self.get_mask(maps, self.substruct_layers, False)
-                mask = mask * maps_sub
-            mask = mask.float().to(x_t.dtype)
+            if MASK_FILE is False:
+                maps = attention_store["down_cross"][10:] + attention_store["up_cross"][:10]#20个down,10个mid,30个up,v1.4中为4,1,6
+                maps = [item.reshape(self.alpha_layers.shape[0], -1, 1, 32, 32, MAX_NUM_WORDS) for item in maps]#原来是16,16
+                maps = torch.cat(maps, dim=1)
+                mask = self.get_mask(maps, self.alpha_layers, True,x_t)
+                if self.substruct_layers is not None:
+                    maps_sub = ~self.get_mask(maps, self.substruct_layers, False)
+                    mask = mask * maps_sub
+                mask = mask.float().to(x_t.dtype)
+            else:
+                mask=self.mask_file.expand_as(x_t).to(x_t.device)
             x_t = x_t[:1] + mask * (x_t - x_t[:1])
             self.mask=mask
+
+
         return x_t
 
     def __init__(self, prompts: List[str], words, tokenizer,device,num_ddim_steps,substruct_words=None, start_blend=0.2,
@@ -86,6 +98,8 @@ class LocalBlend:
         self.alpha_layers = alpha_layers.to(self.model_device)
         self.start_blend = int(start_blend * num_ddim_steps)
         self.counter = 0
+        if MASK_FILE:
+            self.mask_file=get_mask_file()
 
 
 class EmptyControl:
@@ -337,6 +351,28 @@ def load_512(image_path, left=0, right=0, top=0, bottom=0):
         offset = (h - w) // 2
         image = image[offset:offset + w]
     image = np.array(Image.fromarray(image).resize((512, 512)))
+    return image
+
+def load_1024_mask(image_path, left=0, right=0, top=0, bottom=0,target_H=128,target_W=128):
+    if type(image_path) is str:
+        image = np.array(Image.open(image_path))[:, :, np.newaxis]
+    else:
+        image = image_path
+    h, w, c = image.shape
+    left = min(left, w - 1)
+    right = min(right, w - left - 1)
+    top = min(top, h - left - 1)
+    bottom = min(bottom, h - top - 1)
+    image = image[top:h - bottom, left:w - right]
+    h, w, c = image.shape
+    if h < w:
+        offset = (w - h) // 2
+        image = image[:, offset:offset + h]
+    elif w < h:
+        offset = (h - w) // 2
+        image = image[offset:offset + w]
+    image=image.squeeze()
+    image = np.array(Image.fromarray(image).resize((target_H, target_W)))
     return image
 
 def load_1024(image_path, left=0, right=0, top=0, bottom=0):
@@ -641,7 +677,7 @@ def text2image_ldm_stable(
 
 
 def run_and_display(prompts, controller, ldm_stable,num_ddim_steps,guidance_scale,latent=None, run_baseline=False, generator=None, uncond_embeddings=None,
-                    verbose=True,use_old=False,one_img=False,null_inversion=False,text="",pooled_uncond_embeddings=None,folder=None,**kwargs):
+                    verbose=True,use_old=False,one_img=False,null_inversion=False,text="",pooled_uncond_embeddings=None,folder=None,save_per_img=True,**kwargs):
     if run_baseline:
         print("w.o. prompt-to-prompt")
         images, latent = run_and_display(prompts, EmptyControl(), latent=latent, run_baseline=False,
@@ -655,20 +691,22 @@ def run_and_display(prompts, controller, ldm_stable,num_ddim_steps,guidance_scal
         if use_old:
             ptp_utils.view_images_old(images)
         else:
-            ptp_utils.view_images(images,Notimestamp=one_img,text=text,folder=folder)
+            ptp_utils.view_images(images,Notimestamp=one_img,text=text,folder=folder,verbose=save_per_img)
     return images, x_t
 
 def init_model(model_path,model_dtype,num_ddim_steps):
     device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
-    if model_dtype=="fp16":
-        pipe = sdxl.from_pretrained(model_path, torch_dtype=torch.float16, use_safetensors=True, variant="fp16")
-    elif model_dtype=="fp32":
-        pipe = sdxl.from_pretrained(model_path, torch_dtype=torch.float32, use_safetensors=True, variant="fp32")
-    elif model_dtype=="fp16":
-        pipe = sdxl.from_pretrained(model_path, torch_dtype=torch.bfloat16, use_safetensors=True, variant="bf16")
-    pipe.to(device)
     scheduler = DDIMSchedulerDev(beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear", clip_sample=False, set_alpha_to_one=False)
-    pipe.scheduler=scheduler #用DDIM scheduler
+    if model_dtype=="fp16":
+        pipe = sdxl.from_pretrained(model_path, torch_dtype=torch.float16, use_safetensors=True, variant="fp16",scheduler=scheduler)
+    elif model_dtype=="fp32":
+        pipe = sdxl.from_pretrained(model_path, torch_dtype=torch.float32, use_safetensors=True, variant="fp32",scheduler=scheduler)
+    elif model_dtype=="fp16":
+        pipe = sdxl.from_pretrained(model_path, torch_dtype=torch.bfloat16, use_safetensors=True, variant="bf16",scheduler=scheduler)
+    pipe.to(device)
+    
+    #scheduler.set_timesteps(50)
+    #pipe.scheduler=scheduler #用DDIM scheduler
     ldm_stable=pipe
     try:
         ldm_stable.disable_xformers_memory_efficient_attention()
@@ -680,7 +718,7 @@ def init_model(model_path,model_dtype,num_ddim_steps):
 
 def run_ptp(prompts,image_path=None,inv_mode:Optional[str]=None,use_replace=False,cross_replace_steps :Optional[float] =0.3,
             self_replace_steps:Optional[float] =0.2,seed:Optional[int]=None,blend_word=None,eq_params=None,guidance_scale=7.5,
-            num_ddim_steps=50,model_path="/stable-diffusion-xl-base-1.0",model_dtype="fp16",**kwargs):
+            num_ddim_steps=50,model_path="/stable-diffusion-xl-base-1.0",model_dtype="fp16",save_img=True,save_per_img=True,**kwargs):
     ldm_stable,tokenizer,inversion=init_model(model_path,model_dtype,num_ddim_steps)
     assert isinstance(prompts,str) or isinstance(prompts,List)
     if isinstance(prompts,str):
@@ -710,4 +748,5 @@ def run_ptp(prompts,image_path=None,inv_mode:Optional[str]=None,use_replace=Fals
         inversion_guidance=False
     controller = make_controller(prompts,ldm_stable, num_ddim_steps,use_replace, cross_replace_steps, self_replace_steps,blend_word,eq_params,**kwargs)
     images, _ = run_and_display(prompts, controller,ldm_stable,num_ddim_steps, run_baseline=False, latent=x_t, uncond_embeddings=prompt_embeds,pooled_uncond_embeddings=pooled_prompt_embeds,use_old=False,one_img=False,generator=generator,null_inversion=False,
-                                inversion_guidance=inversion_guidance,x_stars=x_stars,guidance_scale=guidance_scale)
+                                inversion_guidance=inversion_guidance,x_stars=x_stars,guidance_scale=guidance_scale,verbose=save_img,save_per_img=save_per_img)
+    return images

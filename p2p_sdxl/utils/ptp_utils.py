@@ -38,7 +38,7 @@ def text_under_image(image: np.ndarray, text: str, text_color: Tuple[int, int, i
 from datetime import datetime
 
 
-def view_images(images, num_rows=1, offset_ratio=0.02,text="",folder=None,Notimestamp=False,grid_dict=None,subfolder=None):
+def view_images(images, num_rows=1, offset_ratio=0.02,text="",folder=None,Notimestamp=False,grid_dict=None,subfolder=None,verbose=True):
     if type(images) is list:
         num_empty = len(images) % num_rows
     elif images.ndim == 4:
@@ -90,9 +90,10 @@ def view_images(images, num_rows=1, offset_ratio=0.02,text="",folder=None,Notime
             filename =text+f"img_{timestamp}.jpg"
     if not os.path.exists(dirname):
         os.makedirs(dirname)
-    for i, img in enumerate(images):
-        im = Image.fromarray(img)
-        im.save(os.path.join(dirname,f"{i}.jpg"))
+    if verbose is True:
+        for i, img in enumerate(images):
+            im = Image.fromarray(img)
+            im.save(os.path.join(dirname,f"{i}.jpg"))
     print(f"Output dir: {dirname}")
     pil_img.save(os.path.join(dirname, filename))
     #dirname=os.path.join(dirname, "2048x")
@@ -341,7 +342,6 @@ def register_attention_control(model, controller):
             # attention, what we cannot get enough of
 
             attn = sim.softmax(dim=-1)
-            #attn0=attn.clone().detach()
             attn = controller(attn, is_cross, place_in_unet)
             out = torch.einsum("b i j, b j d -> b i d", attn, v)
             out = self.batch_to_head_dim(out)
