@@ -20,7 +20,7 @@ import cv2
 from typing import Optional, Union, Tuple, List, Callable, Dict
 from IPython.display import display
 from tqdm.notebook import tqdm
-
+import torch.nn.functional as F
 
 def text_under_image(image: np.ndarray, text: str, text_color: Tuple[int, int, int] = (0, 0, 0)):
     h, w, c = image.shape
@@ -308,7 +308,7 @@ def text2image_ldm_stable(
     return image, latent
 
 
-def register_attention_control(model, controller):
+def register_attention_control(model, controller,masa_control=False):
     def ca_forward(self, place_in_unet):
         to_out = self.to_out
         if type(to_out) is torch.nn.modules.container.ModuleList:
@@ -320,17 +320,56 @@ def register_attention_control(model, controller):
             x = hidden_states
             context = encoder_hidden_states
             mask = attention_mask
-            batch_size, sequence_length, dim = x.shape
+            batch_size, sequence_length, dim = x.shape #当输入两个prompt时,batch_size=4,即:原prompt_uncond,新prompt_uncond,原prompt_cond,新prompt_cond
             h = self.heads
             q = self.to_q(x)
             is_cross = context is not None
             context = context if is_cross else x
             k = self.to_k(context)
             v = self.to_v(context)
-            q = self.head_to_batch_dim(q)
-            k = self.head_to_batch_dim(k)
-            v = self.head_to_batch_dim(v)
+            q = self.head_to_batch_dim(q)#10,4096,64      10,4096,64
+            k = self.head_to_batch_dim(k)#10,4096,64      10,77,64
+            v = self.head_to_batch_dim(v)#10,4096,64      10,77,64
+            if masa_control is True and is_cross is False:
+                #qkv={"q":q,"k":k,"v":v}
+                q,k,v,masa_control_mask=controller.replace_self_attention_kv(q,k,v,h,place_in_unet) 
+                if False:
+                    sim_fg = torch.einsum("b i d, b j d -> b i j", q, k) * self.scale
+                    sim_bg = torch.einsum("b i d, b j d -> b i j", q, k) * self.scale
+                    size=int(np.sqrt(q.shape[1]))
+                    masa_control_mask=F.interpolate(masa_control_mask.to(q.dtype),(size,size))
+                    new_prompt_batch_size=batch_size//2-1
+                    #mask_tar=F.interpolate(mask_tar,(size,size))
+                    mask_src,mask_tar=masa_control_mask[0],masa_control_mask[1:]
+                    mask_src = mask_src.expand(new_prompt_batch_size, -1,-1)
+                    mask_src = mask_src.reshape(new_prompt_batch_size, -1)
+                    mask_src = mask_src[:, None, :].repeat(h, 1, 1)
+                    mask_src_one=torch.ones_like(mask_src[:h])
+                    mask_src=torch.cat([mask_src_one,mask_src]*2,dim=0) 
+                    mask_src=mask_src.gt(0.5) #转换回bool
 
+                    mask_tar=mask_tar.squeeze(1).reshape(new_prompt_batch_size, -1)
+                    mask_tar = mask_tar.reshape(new_prompt_batch_size, -1)
+                    mask_tar = mask_tar[:, :,None].repeat(h, 1,1)
+                    mask_tar_one=torch.ones_like(mask_tar[:h])
+                    mask_tar=torch.cat([mask_tar_one,mask_tar]*2,dim=0)
+                    #mask_tar=mask_tar.gt(0.5) #转换回bool
+
+                    max_neg_value = -torch.finfo(sim_fg.dtype).max
+                    
+                    sim_fg.masked_fill_(~mask_src, max_neg_value)
+                    sim_bg.masked_fill_(mask_src, max_neg_value)
+                    sim = torch.cat([sim_fg, sim_bg])
+
+                    attn = sim.softmax(dim=-1)
+                    if len(attn) == 2 * len(v):
+                        v = torch.cat([v] * 2)
+                    out = torch.einsum("b i j, b j d -> b i d", attn, v)
+                    out_fg,out_bg=out.chunk(2) #[40,4096,64]
+                    #torch.einsum("b i d, b i -> b i d", out_fg, mask_tar)
+                    out=out_fg*mask_tar+out_bg*(1-mask_tar)
+                    out = self.batch_to_head_dim(out)
+                    return to_out(out)
             sim = torch.einsum("b i d, b j d -> b i j", q, k) * self.scale
 
             if mask is not None:
@@ -342,7 +381,7 @@ def register_attention_control(model, controller):
             # attention, what we cannot get enough of
 
             attn = sim.softmax(dim=-1)
-            attn = controller(attn, is_cross, place_in_unet)
+            attn = controller(attn, is_cross, place_in_unet)#10,4096,4096   10,4096,77
             out = torch.einsum("b i j, b j d -> b i d", attn, v)
             out = self.batch_to_head_dim(out)
             return to_out(out)

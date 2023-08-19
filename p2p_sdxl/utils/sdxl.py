@@ -104,6 +104,7 @@ class sdxl(StableDiffusionXLPipeline):
         p2p=None,
         same_init=False,
         null_inversion=False,
+        masa_control=False,
         **kwargs
     ):
         r"""
@@ -195,7 +196,7 @@ class sdxl(StableDiffusionXLPipeline):
         """
         # -1. Controller
         if controller is not None:
-            ptp_utils.register_attention_control(self, controller)
+            ptp_utils.register_attention_control(self, controller,masa_control)
         # 0. Default height and width to unet
         height = height or self.default_sample_size * self.vae_scale_factor
         width = width or self.default_sample_size * self.vae_scale_factor

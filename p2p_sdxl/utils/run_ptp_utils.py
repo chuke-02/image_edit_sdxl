@@ -45,6 +45,7 @@ class LocalBlend:
             plt.clf()
             utils.save_image((mask.gt(self.mask_threshold)[0]+mask.gt(self.mask_threshold)[1]).cpu()*1.0, f"./vis/image_mask.png",cmap='gray')
         mask = mask.gt(self.mask_threshold)
+        self.mask=mask
         mask = mask[:1] + mask
         return mask
 
@@ -52,8 +53,9 @@ class LocalBlend:
     def __call__(self, x_t, attention_store):
         self.counter += 1
         self.mask=None
-        if self.counter > self.start_blend:
-            # 40,1024,77
+        self.origin_mask=None
+        # 40,1024,77
+        if attention_store is not None:
             if MASK_FILE is False:
                 maps = attention_store["down_cross"][10:] + attention_store["up_cross"][:10]#20个down,10个mid,30个up,v1.4中为4,1,6
                 maps = [item.reshape(self.alpha_layers.shape[0], -1, 1, 32, 32, MAX_NUM_WORDS) for item in maps]#原来是16,16
@@ -65,14 +67,13 @@ class LocalBlend:
                 mask = mask.float().to(x_t.dtype)
             else:
                 mask=self.mask_file.expand_as(x_t).to(x_t.device)
+                self.mask=mask
+        if self.counter > self.start_blend and self.x_t_replace is True:
             x_t = x_t[:1] + mask * (x_t - x_t[:1])
-            self.mask=mask
-
-
         return x_t
 
     def __init__(self, prompts: List[str], words, tokenizer,device,num_ddim_steps,substruct_words=None, start_blend=0.2,
-                 mask_threshold=0.6):
+                 mask_threshold=0.6,x_t_replace=True):
         alpha_layers = torch.zeros(len(prompts), 1, 1, 1, 1, MAX_NUM_WORDS)
         self.tokenizer=tokenizer
         self.mask_threshold=mask_threshold
@@ -98,8 +99,10 @@ class LocalBlend:
         self.alpha_layers = alpha_layers.to(self.model_device)
         self.start_blend = int(start_blend * num_ddim_steps)
         self.counter = 0
+        self.mask=None
         if MASK_FILE:
             self.mask_file=get_mask_file()
+        self.x_t_replace=x_t_replace
 
 
 class EmptyControl:
@@ -186,7 +189,8 @@ class AttentionStore(AttentionControl):
         else:
             for key in self.attention_store:
                 for i in range(len(self.attention_store[key])):
-                    self.attention_store[key][i] += self.step_store[key][i]
+                    if self.masa_control is False or len(self.step_store[key])!=0:
+                        self.attention_store[key][i] += self.step_store[key][i]
         self.step_store = self.get_empty_store()
 
     def get_average_attention(self):
@@ -219,6 +223,29 @@ class AttentionControlEdit(AttentionStore, abc.ABC):
         else:
             return att_replace
 
+
+        
+    def replace_self_attention_kv(self,q,k,v,heads,place_in_unet):
+        #print(self.local_blend.counter)
+        if self.local_blend.counter <5 and self.local_blend.mask is not None and place_in_unet=='up':
+            #q,k,v均为[40,4096,64]
+            #q_u,q_c=q.chunk(2)
+            # k_u,k_c=k.chunk(2)
+            # v_u,v_c=v.chunk(2)
+            kv=torch.cat([k,v],dim=0)
+            split_kv = kv.split(heads, dim=0)
+            new_kv = torch.stack(split_kv, dim=0)# [8(batch_size*4),10,4096,64]
+            split_new_kv = torch.chunk(new_kv, chunks=4, dim=0)# 
+            new_kv = torch.stack(split_new_kv, dim=0)# [4,batch_size,10,4096,64] ,第0维的4代表k_u,k_c,v_u,v_c
+            batch_size=new_kv.shape[0]
+            assert batch_size>1,"masa control : batch_size > 1"
+            new_kv[:,1:]=new_kv[:,0].unsqueeze(1).expand_as(new_kv[:,1:])
+            new_kv=new_kv.reshape(-1,*new_kv.shape[-2:])
+            k,v=new_kv.chunk(2)
+            return q,k,v,self.local_blend.mask#[2,1,128,128]
+        else:
+            return q,k,v,None
+
     @abc.abstractmethod
     def replace_cross_attention(self, attn_base, att_replace):
         raise NotImplementedError
@@ -242,7 +269,7 @@ class AttentionControlEdit(AttentionStore, abc.ABC):
     def __init__(self, prompts, num_steps: int,model,
                  cross_replace_steps: Union[float, Tuple[float, float], Dict[str, Tuple[float, float]]],
                  self_replace_steps: Union[float, Tuple[float, float]],
-                 local_blend: Optional[LocalBlend]):
+                 local_blend: Optional[LocalBlend],masa_control=False):
         super(AttentionControlEdit, self).__init__()
         self.model_dtype=model.unet.dtype
         self.tokenizer=model.tokenizer
@@ -254,6 +281,7 @@ class AttentionControlEdit(AttentionStore, abc.ABC):
             self_replace_steps = 0, self_replace_steps
         self.num_self_replace = int(num_steps * self_replace_steps[0]), int(num_steps * self_replace_steps[1])
         self.local_blend = local_blend
+        self.masa_control=masa_control
 
 
 class AttentionReplace(AttentionControlEdit):
@@ -262,8 +290,8 @@ class AttentionReplace(AttentionControlEdit):
         return torch.einsum('hpw,bwn->bhpn', attn_base, self.mapper)
 
     def __init__(self, prompts, num_steps: int,model, cross_replace_steps: float, self_replace_steps: float,
-                 local_blend: Optional[LocalBlend] = None):
-        super(AttentionReplace, self).__init__(prompts, num_steps,model, cross_replace_steps, self_replace_steps, local_blend)
+                 local_blend: Optional[LocalBlend] = None,masa_control=False):
+        super(AttentionReplace, self).__init__(prompts, num_steps,model, cross_replace_steps, self_replace_steps, local_blend,masa_control=masa_control)
         self.mapper = seq_aligner.get_replacement_mapper(prompts, self.tokenizer).to(self.model_device)
         self.mapper=self.mapper.to(self.model_dtype)
 
@@ -277,8 +305,8 @@ class AttentionRefine(AttentionControlEdit):
         return attn_replace
 
     def __init__(self, prompts, num_steps: int, model,cross_replace_steps: float, self_replace_steps: float,
-                 local_blend: Optional[LocalBlend] = None):
-        super(AttentionRefine, self).__init__(prompts, num_steps,model, cross_replace_steps, self_replace_steps, local_blend)
+                 local_blend: Optional[LocalBlend] = None,masa_control=False):
+        super(AttentionRefine, self).__init__(prompts, num_steps,model, cross_replace_steps, self_replace_steps, local_blend,masa_control=masa_control)
         self.mapper, alphas = seq_aligner.get_refinement_mapper(prompts, self.tokenizer)
         self.mapper, alphas = self.mapper.to(self.model_device), alphas.to(self.model_device)
         self.alphas = alphas.reshape(alphas.shape[0], 1, 1, alphas.shape[1])
@@ -294,9 +322,9 @@ class AttentionReweight(AttentionControlEdit):
         return attn_replace
 
     def __init__(self, prompts, num_steps: int, model,cross_replace_steps: float, self_replace_steps: float, equalizer,
-                 local_blend: Optional[LocalBlend] = None, controller: Optional[AttentionControlEdit] = None):
+                 local_blend: Optional[LocalBlend] = None, controller: Optional[AttentionControlEdit] = None,masa_control=False):
         super(AttentionReweight, self).__init__(prompts, num_steps,model, cross_replace_steps, self_replace_steps,
-                                                local_blend)
+                                                local_blend,masa_control=masa_control)
         self.equalizer = equalizer.to(self.model_device)
         self.prev_controller = controller
 
@@ -314,22 +342,22 @@ Tuple[float, ...]],model):
 
 
 def make_controller(prompts: List[str], model,num_ddim_steps,is_replace_controller: bool, cross_replace_steps: Dict[str, float],
-                    self_replace_steps: float, blend_words=None, equilizer_params=None,**kwargs) -> AttentionControlEdit:
+                    self_replace_steps: float, blend_words=None, equilizer_params=None,masa_control=False,**kwargs) -> AttentionControlEdit:
     if blend_words is None:
         lb = None
     else:
         lb = LocalBlend(prompts, blend_words,model.tokenizer,model.unet.device,num_ddim_steps,**kwargs)
     if is_replace_controller:
         controller = AttentionReplace(prompts, num_ddim_steps, model,cross_replace_steps=cross_replace_steps,
-                                      self_replace_steps=self_replace_steps, local_blend=lb)
+                                      self_replace_steps=self_replace_steps, local_blend=lb,masa_control=masa_control)
     else:
         controller = AttentionRefine(prompts, num_ddim_steps, model,cross_replace_steps=cross_replace_steps,
-                                     self_replace_steps=self_replace_steps, local_blend=lb)
+                                     self_replace_steps=self_replace_steps, local_blend=lb,masa_control=masa_control)
     if equilizer_params is not None:
         eq = get_equalizer(prompts[1], equilizer_params["words"], equilizer_params["values"],model)
         controller = AttentionReweight(prompts, num_ddim_steps,model, cross_replace_steps=cross_replace_steps,
                                        self_replace_steps=self_replace_steps, equalizer=eq, local_blend=lb,
-                                       controller=controller)
+                                       controller=controller,masa_control=masa_control)
     return controller
 
 def load_512(image_path, left=0, right=0, top=0, bottom=0):
@@ -718,7 +746,8 @@ def init_model(model_path,model_dtype,num_ddim_steps):
 
 def run_ptp(prompts,image_path=None,inv_mode:Optional[str]=None,use_replace=False,cross_replace_steps :Optional[float] =0.3,
             self_replace_steps:Optional[float] =0.2,seed:Optional[int]=None,blend_word=None,eq_params=None,guidance_scale=7.5,
-            num_ddim_steps=50,model_path="/stable-diffusion-xl-base-1.0",model_dtype="fp16",save_img=True,save_per_img=True,**kwargs):
+            num_ddim_steps=50,model_path="/stable-diffusion-xl-base-1.0",model_dtype="fp16",save_img=True,save_per_img=True,
+            masa_control=False,**kwargs):
     ldm_stable,tokenizer,inversion=init_model(model_path,model_dtype,num_ddim_steps)
     assert isinstance(prompts,str) or isinstance(prompts,List)
     if isinstance(prompts,str):
@@ -746,7 +775,7 @@ def run_ptp(prompts,image_path=None,inv_mode:Optional[str]=None,use_replace=Fals
         prompt_embeds=None
         pooled_prompt_embeds=None
         inversion_guidance=False
-    controller = make_controller(prompts,ldm_stable, num_ddim_steps,use_replace, cross_replace_steps, self_replace_steps,blend_word,eq_params,**kwargs)
+    controller = make_controller(prompts,ldm_stable, num_ddim_steps,use_replace, cross_replace_steps, self_replace_steps,blend_word,eq_params,masa_control,**kwargs)
     images, _ = run_and_display(prompts, controller,ldm_stable,num_ddim_steps, run_baseline=False, latent=x_t, uncond_embeddings=prompt_embeds,pooled_uncond_embeddings=pooled_prompt_embeds,use_old=False,one_img=False,generator=generator,null_inversion=False,
-                                inversion_guidance=inversion_guidance,x_stars=x_stars,guidance_scale=guidance_scale,verbose=save_img,save_per_img=save_per_img)
+                                inversion_guidance=inversion_guidance,x_stars=x_stars,guidance_scale=guidance_scale,verbose=save_img,save_per_img=save_per_img,masa_control=masa_control)
     return images
