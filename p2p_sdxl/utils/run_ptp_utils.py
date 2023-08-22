@@ -73,7 +73,7 @@ class LocalBlend:
         return x_t
 
     def __init__(self, prompts: List[str], words, tokenizer,device,num_ddim_steps,substruct_words=None, start_blend=0.2,
-                 mask_threshold=0.6,x_t_replace=True):
+                 mask_threshold=0.6,x_t_replace=True,**kwargs):
         alpha_layers = torch.zeros(len(prompts), 1, 1, 1, 1, MAX_NUM_WORDS)
         self.tokenizer=tokenizer
         self.mask_threshold=mask_threshold
@@ -189,7 +189,7 @@ class AttentionStore(AttentionControl):
         else:
             for key in self.attention_store:
                 for i in range(len(self.attention_store[key])):
-                    if self.masa_control is False or len(self.step_store[key])!=0:
+                    if self.masa_control is False :
                         self.attention_store[key][i] += self.step_store[key][i]
         self.step_store = self.get_empty_store()
 
@@ -223,11 +223,22 @@ class AttentionControlEdit(AttentionStore, abc.ABC):
         else:
             return att_replace
 
+    def count_layers(self,place_in_unet,is_cross):
+        if self.last_status=='up' and place_in_unet=='down':
+            self.self_layer=0
+            self.cross_layer=0
+        self.last_status=place_in_unet
+        if is_cross is True:
+            self.cross_layer=self.cross_layer+1
+        else:
+            self.self_layer=self.self_layer+1
+        #print(self.self_layer,self.cross_layer)
 
         
-    def replace_self_attention_kv(self,q,k,v,heads,place_in_unet):
+    def replace_self_attention_kv(self,q,k,v,heads,place_in_unet,masa_start_step,masa_start_layer):
         #print(self.local_blend.counter)
-        if self.local_blend.counter <5 and self.local_blend.mask is not None and place_in_unet=='up':
+        if self.local_blend.counter >= masa_start_step and self.local_blend.mask is not None  and self.self_layer>=masa_start_layer:
+ 
             #q,k,v均为[40,4096,64]
             #q_u,q_c=q.chunk(2)
             # k_u,k_c=k.chunk(2)
@@ -242,6 +253,14 @@ class AttentionControlEdit(AttentionStore, abc.ABC):
             new_kv[:,1:]=new_kv[:,0].unsqueeze(1).expand_as(new_kv[:,1:])
             new_kv=new_kv.reshape(-1,*new_kv.shape[-2:])
             k,v=new_kv.chunk(2)
+            if  False and self.local_blend.counter%10==0 and self.last_save!=self.local_blend.counter:
+                sns.heatmap(self.local_blend.mask[0][0].clone().cpu(), cmap='coolwarm')
+                plt.savefig(f'./vis/masa_control/mask0_{self.local_blend.counter}.png')
+                plt.clf()
+                sns.heatmap(self.local_blend.mask[1][0].clone().cpu(), cmap='coolwarm')
+                plt.savefig(f'./vis/masa_control/mask1_{self.local_blend.counter}.png')
+                plt.clf()
+                self.last_save=self.local_blend.counter
             return q,k,v,self.local_blend.mask#[2,1,128,128]
         else:
             return q,k,v,None
@@ -282,6 +301,10 @@ class AttentionControlEdit(AttentionStore, abc.ABC):
         self.num_self_replace = int(num_steps * self_replace_steps[0]), int(num_steps * self_replace_steps[1])
         self.local_blend = local_blend
         self.masa_control=masa_control
+        self.last_save=None
+        self.self_layer=0
+        self.cross_layer=0
+        self.last_status='up'
 
 
 class AttentionReplace(AttentionControlEdit):
@@ -722,7 +745,7 @@ def run_and_display(prompts, controller, ldm_stable,num_ddim_steps,guidance_scal
             ptp_utils.view_images(images,Notimestamp=one_img,text=text,folder=folder,verbose=save_per_img)
     return images, x_t
 
-def init_model(model_path,model_dtype,num_ddim_steps):
+def init_model(model_path="/stable-diffusion-xl-base-1.0",model_dtype="fp16",num_ddim_steps=50):
     device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
     scheduler = DDIMSchedulerDev(beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear", clip_sample=False, set_alpha_to_one=False)
     if model_dtype=="fp16":
@@ -742,13 +765,15 @@ def init_model(model_path,model_dtype,num_ddim_steps):
         print("Attribute disable_xformers_memory_efficient_attention() is missing")
     tokenizer = ldm_stable.tokenizer
     inversion = Inversion(ldm_stable,num_ddim_steps)
-    return ldm_stable,tokenizer,inversion
+    return ldm_stable,inversion
 
 def run_ptp(prompts,image_path=None,inv_mode:Optional[str]=None,use_replace=False,cross_replace_steps :Optional[float] =0.3,
             self_replace_steps:Optional[float] =0.2,seed:Optional[int]=None,blend_word=None,eq_params=None,guidance_scale=7.5,
             num_ddim_steps=50,model_path="/stable-diffusion-xl-base-1.0",model_dtype="fp16",save_img=True,save_per_img=True,
-            masa_control=False,**kwargs):
-    ldm_stable,tokenizer,inversion=init_model(model_path,model_dtype,num_ddim_steps)
+            masa_control=False,model=None,inversion=None,**kwargs):
+    ldm_stable=model
+    if ldm_stable is None or inversion is None :
+        ldm_stable,inversion=init_model(model_path,model_dtype,num_ddim_steps)
     assert isinstance(prompts,str) or isinstance(prompts,List)
     if isinstance(prompts,str):
         prompts=[prompts]
@@ -762,10 +787,10 @@ def run_ptp(prompts,image_path=None,inv_mode:Optional[str]=None,use_replace=Fals
         (image_gt, image_enc), x_t,x_stars, prompt_embeds,pooled_prompt_embeds = inversion.invert(image_path, prompts[0], offsets=(0,0,0,0), verbose=True,train_free=True,all_latents=True)
         assert inv_mode =="proxNPI" or inv_mode =="NPI"
         if  inv_mode =="proxNPI":
-            print("Proximal Inversion...")
+            print("Use Proximal Inversion")
             inversion_guidance=True
         elif inv_mode =="NPI":
-            print("Negative-prompt Inversion...")
+            print("Use Negative-prompt Inversion")
             inversion_guidance=False
         else:
             inversion_guidance=False
@@ -777,5 +802,5 @@ def run_ptp(prompts,image_path=None,inv_mode:Optional[str]=None,use_replace=Fals
         inversion_guidance=False
     controller = make_controller(prompts,ldm_stable, num_ddim_steps,use_replace, cross_replace_steps, self_replace_steps,blend_word,eq_params,masa_control,**kwargs)
     images, _ = run_and_display(prompts, controller,ldm_stable,num_ddim_steps, run_baseline=False, latent=x_t, uncond_embeddings=prompt_embeds,pooled_uncond_embeddings=pooled_prompt_embeds,use_old=False,one_img=False,generator=generator,null_inversion=False,
-                                inversion_guidance=inversion_guidance,x_stars=x_stars,guidance_scale=guidance_scale,verbose=save_img,save_per_img=save_per_img,masa_control=masa_control)
+                                inversion_guidance=inversion_guidance,x_stars=x_stars,guidance_scale=guidance_scale,verbose=save_img,save_per_img=save_per_img,masa_control=masa_control,**kwargs)
     return images

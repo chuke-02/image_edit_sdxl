@@ -308,7 +308,7 @@ def text2image_ldm_stable(
     return image, latent
 
 
-def register_attention_control(model, controller,masa_control=False):
+def register_attention_control(model, controller,masa_control=False,masa_mask=True,masa_start_step=40,masa_start_layer=55):
     def ca_forward(self, place_in_unet):
         to_out = self.to_out
         if type(to_out) is torch.nn.modules.container.ModuleList:
@@ -330,14 +330,17 @@ def register_attention_control(model, controller,masa_control=False):
             q = self.head_to_batch_dim(q)#10,4096,64      10,4096,64
             k = self.head_to_batch_dim(k)#10,4096,64      10,77,64
             v = self.head_to_batch_dim(v)#10,4096,64      10,77,64
+            if hasattr(controller, 'count_layers'):
+                controller.count_layers(place_in_unet,is_cross)
             if masa_control is True and is_cross is False:
                 #qkv={"q":q,"k":k,"v":v}
-                q,k,v,masa_control_mask=controller.replace_self_attention_kv(q,k,v,h,place_in_unet) 
-                if False:
+                q,k,v,masa_control_mask=controller.replace_self_attention_kv(q,k,v,h,place_in_unet,masa_start_step,masa_start_layer) 
+                if masa_mask is True and masa_control_mask is not None:
                     sim_fg = torch.einsum("b i d, b j d -> b i j", q, k) * self.scale
                     sim_bg = torch.einsum("b i d, b j d -> b i j", q, k) * self.scale
                     size=int(np.sqrt(q.shape[1]))
                     masa_control_mask=F.interpolate(masa_control_mask.to(q.dtype),(size,size))
+
                     new_prompt_batch_size=batch_size//2-1
                     #mask_tar=F.interpolate(mask_tar,(size,size))
                     mask_src,mask_tar=masa_control_mask[0],masa_control_mask[1:]
