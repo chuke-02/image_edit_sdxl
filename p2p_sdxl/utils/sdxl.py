@@ -1,30 +1,17 @@
 
-import inspect
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
-
+import seaborn as sns
+import matplotlib.pyplot as plt
 import torch
-from transformers import CLIPTextModel, CLIPTextModelWithProjection, CLIPTokenizer
 from diffusers import StableDiffusionXLPipeline
 from typing import Optional, Union, Tuple, List, Callable, Dict
-from tqdm.notebook import tqdm
-from diffusers import StableDiffusionPipeline, DDIMScheduler
-import torch.nn.functional as nnf
 import numpy as np
-import abc
 import utils.ptp_utils as ptp_utils
-import utils.seq_aligner as seq_aligner
-import shutil
-from torch.optim.adam import Adam
-from PIL import Image
 import torch.nn.functional as F
-
-from diffusers.loaders import FromSingleFileMixin, LoraLoaderMixin, TextualInversionLoaderMixin 
+from diffusers.loaders import  LoraLoaderMixin, TextualInversionLoaderMixin 
 from diffusers.models.attention_processor import ( AttnProcessor2_0, LoRAAttnProcessor2_0, LoRAXFormersAttnProcessor, XFormersAttnProcessor, ) 
-from diffusers.utils import ( is_accelerate_available, is_accelerate_version, logging, randn_tensor, replace_example_docstring, ) 
-from diffusers.pipelines.pipeline_utils import DiffusionPipeline 
+from diffusers.utils import (  logging, randn_tensor, replace_example_docstring, ) 
 from diffusers.pipelines.stable_diffusion_xl import StableDiffusionXLPipelineOutput 
-
-
 from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl import rescale_noise_cfg
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -47,32 +34,6 @@ EXAMPLE_DOC_STRING = """
 
 
 class sdxl(StableDiffusionXLPipeline): 
-    # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.StableDiffusionPipeline.prepare_latents
-    def prepare_latents(self, batch_size, num_channels_latents, height, width, dtype, device, generator, latents=None,same_init=False):
-        shape = (batch_size, num_channels_latents, height // self.vae_scale_factor, width // self.vae_scale_factor)
-        if isinstance(generator, list) and len(generator) != batch_size:
-            raise ValueError(
-                f"You have passed a list of generators of length {len(generator)}, but requested an effective batch"
-                f" size of {batch_size}. Make sure the batch size matches the length of the generators."
-            )
-        if same_init is True:
-            if latents is None:
-                latents = randn_tensor((1,*shape[1:]), generator=generator, device=device, dtype=dtype).expand(shape).to(device)
-            else:
-                if batch_size>1 and latents.shape[0]==1:
-                    latents=latents.expand(shape).to(device)
-                else:
-                    latents = latents.to(device)
-        else: 
-            if latents is None:
-                latents = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
-            else:
-                latents = latents.to(device)
-
-        # scale the initial noise by the standard deviation required by the scheduler
-        latents = latents * self.scheduler.init_noise_sigma
-        return latents
-    
     @replace_example_docstring(EXAMPLE_DOC_STRING)
     @torch.no_grad()
     def __call__(
@@ -104,6 +65,8 @@ class sdxl(StableDiffusionXLPipeline):
         p2p=None,
         same_init=False,
         null_inversion=False,
+        x_stars=None,
+        prox_guidance=False,
         masa_control=False,
         masa_mask=False,
         masa_start_step=40,
@@ -208,33 +171,18 @@ class sdxl(StableDiffusionXLPipeline):
         target_size = target_size or (height, width)
 
         # 1. Check inputs. Raise error if not correct
-        if null_inversion is False:
-            self.check_inputs(
-                prompt,
-                height,
-                width,
-                callback_steps,
-                negative_prompt,
-                prompt_embeds,
-                negative_prompt_embeds,
-                pooled_prompt_embeds,
-                negative_pooled_prompt_embeds,
-            )
-        else:
-            negative_pooled_prompt_embeds=[]
-            for negative_prompt_embeds_per_stage in negative_prompt_embeds:
-                negative_pooled_prompt_embeds.append(negative_prompt_embeds_per_stage[:,0,768:])
-            self.check_inputs(
-                prompt,
-                height,
-                width,
-                callback_steps,
-                negative_prompt,
-                prompt_embeds,
-                negative_prompt_embeds[0],
-                pooled_prompt_embeds,
-                negative_pooled_prompt_embeds,
-            )
+        self.check_inputs(
+            prompt,
+            height,
+            width,
+            callback_steps,
+            negative_prompt,
+            prompt_embeds,
+            negative_prompt_embeds,
+            pooled_prompt_embeds,
+            negative_pooled_prompt_embeds,
+        )
+
 
         # 2. Define call parameters
         if prompt is not None and isinstance(prompt, str):
@@ -289,9 +237,8 @@ class sdxl(StableDiffusionXLPipeline):
             device,
             generator,
             latents,
-            same_init=same_init
+            same_init=same_init #ADD
         )
-        latent_store=latents[0].clone().detach()
         # 6. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
 
@@ -302,54 +249,66 @@ class sdxl(StableDiffusionXLPipeline):
         )
 
         if do_classifier_free_guidance:
-            if isinstance(negative_prompt_embeds,List) is False:
-                all_prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
-                all_add_text_embeds = torch.cat([negative_pooled_prompt_embeds, add_text_embeds], dim=0)
-                all_prompt_embeds = all_prompt_embeds.to(device)
-                all_add_text_embeds = all_add_text_embeds.to(device)
+            prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
+            add_text_embeds = torch.cat([negative_pooled_prompt_embeds, add_text_embeds], dim=0)
             add_time_ids = torch.cat([add_time_ids, add_time_ids], dim=0)
 
-
+        prompt_embeds = prompt_embeds.to(device)
+        add_text_embeds = add_text_embeds.to(device)
         add_time_ids = add_time_ids.to(device).repeat(batch_size * num_images_per_prompt, 1)
 
         # 8. Denoising loop
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
-                if isinstance(negative_prompt_embeds,List):
-                    if do_classifier_free_guidance:
-                        all_prompt_embeds = torch.cat([negative_prompt_embeds[i].repeat(2,1,1), prompt_embeds], dim=0)
-                        all_prompt_embeds = all_prompt_embeds.to(device)
-                        all_add_text_embeds = torch.cat([negative_pooled_prompt_embeds[i].repeat(2,1), add_text_embeds], dim=0)
-                        all_add_text_embeds = all_add_text_embeds.to(device)
                 # expand the latents if we are doing classifier free guidance
                 latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
 
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
                 # predict the noise residual
-                added_cond_kwargs = {"text_embeds": all_add_text_embeds, "time_ids": add_time_ids}
+                added_cond_kwargs = {"text_embeds": add_text_embeds, "time_ids": add_time_ids}
                 noise_pred = self.unet(
                     latent_model_input,
                     t,
-                    encoder_hidden_states=all_prompt_embeds,
+                    encoder_hidden_states=prompt_embeds,
                     cross_attention_kwargs=cross_attention_kwargs,
                     added_cond_kwargs=added_cond_kwargs,
                     return_dict=False,
                 )[0]
 
-                kwargs.update(extra_step_kwargs)
-                latents=exec_classifier_free_guidance(self,
-                                                      latents,
-                                                      controller,
-                                                      t,
-                                                      guidance_scale,
-                                                      do_classifier_free_guidance,
-                                                      noise_pred,
-                                                      guidance_rescale,
-                                                      i=i,
-                                                      **kwargs)
+                # perform guidance
+                if do_classifier_free_guidance:
+                    noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+                    # CHANGE START
+                    score_delta,mask_edit=prox_regularization(
+                        noise_pred_uncond,
+                        noise_pred_text,
+                        i,
+                        t,
+                        prox_guidance=prox_guidance,
+                    )
+                    noise_pred = noise_pred_uncond + guidance_scale * score_delta
+                    # CHANGE END
 
+                if do_classifier_free_guidance and guidance_rescale > 0.0:
+                    # Based on 3.4. in https://arxiv.org/pdf/2305.08891.pdf
+                    noise_pred = rescale_noise_cfg(noise_pred, noise_pred_text, guidance_rescale=guidance_rescale)
+              
+                # compute the previous noisy sample x_t -> x_t-1
+                latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs, return_dict=False)[0]
+
+                # ADD START
+                latents = proximal_guidance(
+                    i,
+                    t,
+                    latents,
+                    mask_edit,
+                    dtype=self.unet.dtype,
+                    controller=controller,
+                    x_stars=x_stars
+                )
+                # ADD END
 
                 # call the callback, if provided
                 if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
@@ -391,12 +350,38 @@ class sdxl(StableDiffusionXLPipeline):
         if hasattr(self, "final_offload_hook") and self.final_offload_hook is not None:
             self.final_offload_hook.offload()
 
-        if p2p is True:
-            return image,latent_store
         if not return_dict:
             return (image,)
 
         return StableDiffusionXLPipelineOutput(images=image)
+    
+    # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.StableDiffusionPipeline.prepare_latents
+    def prepare_latents(self, batch_size, num_channels_latents, height, width, dtype, device, generator, latents=None,same_init=False):
+        shape = (batch_size, num_channels_latents, height // self.vae_scale_factor, width // self.vae_scale_factor)
+        if isinstance(generator, list) and len(generator) != batch_size:
+            raise ValueError(
+                f"You have passed a list of generators of length {len(generator)}, but requested an effective batch"
+                f" size of {batch_size}. Make sure the batch size matches the length of the generators."
+            )
+        # ADD START
+        if same_init is True:
+            if latents is None:
+                latents = randn_tensor((1,*shape[1:]), generator=generator, device=device, dtype=dtype).expand(shape).to(device)
+            else:
+                if batch_size>1 and latents.shape[0]==1:
+                    latents=latents.expand(shape).to(device)
+                else:
+                    latents = latents.to(device)
+        else: 
+        # ADD END
+            if latents is None:
+                latents = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
+            else:
+                latents = latents.to(device)
+
+        # scale the initial noise by the standard deviation required by the scheduler
+        latents = latents * self.scheduler.init_noise_sigma
+        return latents
     
     def encode_prompt(
         self,
@@ -532,107 +517,62 @@ class sdxl(StableDiffusionXLPipeline):
             else:
                 uncond_tokens = negative_prompt
             
-            if isinstance(negative_prompt, List):
-                all_negative_prompt=[]
-                for negative_prompt_ in negative_prompt:
-                    negative_prompt_embeds_list = []
-                    for tokenizer, text_encoder in zip(tokenizers, text_encoders):
-                        # textual inversion: procecss multi-vector tokens if necessary
-                        if isinstance(self, TextualInversionLoaderMixin):
-                            uncond_tokens = self.maybe_convert_prompt(uncond_tokens, tokenizer)
 
-                        max_length = prompt_embeds.shape[1]
-                        uncond_input = tokenizer(
-                            uncond_tokens,
-                            padding="max_length",
-                            max_length=max_length,
-                            truncation=True,
-                            return_tensors="pt",
-                        )
+            negative_prompt_embeds_list = []
+            for tokenizer, text_encoder in zip(tokenizers, text_encoders):
+                # textual inversion: procecss multi-vector tokens if necessary
+                if isinstance(self, TextualInversionLoaderMixin):
+                    uncond_tokens = self.maybe_convert_prompt(uncond_tokens, tokenizer)
 
-                        negative_prompt_embeds = text_encoder(
-                            uncond_input.input_ids.to(device),
-                            output_hidden_states=True,
-                        )
-                        # We are only ALWAYS interested in the pooled output of the final text encoder
-                        negative_pooled_prompt_embeds = negative_prompt_embeds[0]
-                        negative_prompt_embeds = negative_prompt_embeds.hidden_states[-2]
+                max_length = prompt_embeds.shape[1]
+                uncond_input = tokenizer(
+                    uncond_tokens,
+                    padding="max_length",
+                    max_length=max_length,
+                    truncation=True,
+                    return_tensors="pt",
+                )
 
-                        if do_classifier_free_guidance:
-                            # duplicate unconditional embeddings for each generation per prompt, using mps friendly method
-                            seq_len = negative_prompt_embeds.shape[1]
+                negative_prompt_embeds = text_encoder(
+                    uncond_input.input_ids.to(device),
+                    output_hidden_states=True,
+                )
+                # We are only ALWAYS interested in the pooled output of the final text encoder
+                negative_pooled_prompt_embeds = negative_prompt_embeds[0]
+                negative_prompt_embeds = negative_prompt_embeds.hidden_states[-2]
 
-                            negative_prompt_embeds = negative_prompt_embeds.to(dtype=text_encoder.dtype, device=device)
+                if do_classifier_free_guidance:
+                    # duplicate unconditional embeddings for each generation per prompt, using mps friendly method
+                    seq_len = negative_prompt_embeds.shape[1]
 
-                            negative_prompt_embeds = negative_prompt_embeds.repeat(1, num_images_per_prompt, 1)
-                            negative_prompt_embeds = negative_prompt_embeds.view(
-                                batch_size * num_images_per_prompt, seq_len, -1
-                            )
+                    negative_prompt_embeds = negative_prompt_embeds.to(dtype=text_encoder.dtype, device=device)
 
-                            # For classifier free guidance, we need to do two forward passes.
-                            # Here we concatenate the unconditional and text embeddings into a single batch
-                            # to avoid doing two forward passes
-
-                        negative_prompt_embeds_list.append(negative_prompt_embeds)
-
-                    negative_prompt_embeds = torch.concat(negative_prompt_embeds_list, dim=-1)
-                    all_negative_prompt.append(negative_prompt_embeds)
-                negative_prompt_embeds=all_negative_prompt
-            else:
-                negative_prompt_embeds_list = []
-                for tokenizer, text_encoder in zip(tokenizers, text_encoders):
-                    # textual inversion: procecss multi-vector tokens if necessary
-                    if isinstance(self, TextualInversionLoaderMixin):
-                        uncond_tokens = self.maybe_convert_prompt(uncond_tokens, tokenizer)
-
-                    max_length = prompt_embeds.shape[1]
-                    uncond_input = tokenizer(
-                        uncond_tokens,
-                        padding="max_length",
-                        max_length=max_length,
-                        truncation=True,
-                        return_tensors="pt",
+                    negative_prompt_embeds = negative_prompt_embeds.repeat(1, num_images_per_prompt, 1)
+                    negative_prompt_embeds = negative_prompt_embeds.view(
+                        batch_size * num_images_per_prompt, seq_len, -1
                     )
 
-                    negative_prompt_embeds = text_encoder(
-                        uncond_input.input_ids.to(device),
-                        output_hidden_states=True,
-                    )
-                    # We are only ALWAYS interested in the pooled output of the final text encoder
-                    negative_pooled_prompt_embeds = negative_prompt_embeds[0]
-                    negative_prompt_embeds = negative_prompt_embeds.hidden_states[-2]
+                    # For classifier free guidance, we need to do two forward passes.
+                    # Here we concatenate the unconditional and text embeddings into a single batch
+                    # to avoid doing two forward passes
 
-                    if do_classifier_free_guidance:
-                        # duplicate unconditional embeddings for each generation per prompt, using mps friendly method
-                        seq_len = negative_prompt_embeds.shape[1]
+                negative_prompt_embeds_list.append(negative_prompt_embeds)
 
-                        negative_prompt_embeds = negative_prompt_embeds.to(dtype=text_encoder.dtype, device=device)
-
-                        negative_prompt_embeds = negative_prompt_embeds.repeat(1, num_images_per_prompt, 1)
-                        negative_prompt_embeds = negative_prompt_embeds.view(
-                            batch_size * num_images_per_prompt, seq_len, -1
-                        )
-
-                        # For classifier free guidance, we need to do two forward passes.
-                        # Here we concatenate the unconditional and text embeddings into a single batch
-                        # to avoid doing two forward passes
-
-                    negative_prompt_embeds_list.append(negative_prompt_embeds)
-
-                negative_prompt_embeds = torch.concat(negative_prompt_embeds_list, dim=-1)
+            negative_prompt_embeds = torch.concat(negative_prompt_embeds_list, dim=-1)
 
         bs_embed = pooled_prompt_embeds.shape[0]
-        if num_images_per_prompt>1:
-            pooled_prompt_embeds = pooled_prompt_embeds.repeat(1, num_images_per_prompt).view(
-                bs_embed * num_images_per_prompt, -1
-            )
-            negative_pooled_prompt_embeds = negative_pooled_prompt_embeds.repeat(1, num_images_per_prompt).view(
-                bs_embed * num_images_per_prompt, -1
-            )
+        # ADD START
         if negative_pooled_prompt_embeds.shape[0]==1 and bs_embed!=1:
             negative_pooled_prompt_embeds=negative_pooled_prompt_embeds.repeat(bs_embed,1)
         if negative_prompt_embeds.shape[0]==1 and bs_embed!=1:
             negative_prompt_embeds=negative_prompt_embeds.repeat(bs_embed,1,1)
+        # ADD END
+        pooled_prompt_embeds = pooled_prompt_embeds.repeat(1, num_images_per_prompt).view(
+            bs_embed * num_images_per_prompt, -1
+        )
+        negative_pooled_prompt_embeds = negative_pooled_prompt_embeds.repeat(1, num_images_per_prompt).view(
+            bs_embed * num_images_per_prompt, -1
+        )
           
         return prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds
 
@@ -881,8 +821,6 @@ def exec_classifier_free_guidance(model,latents,controller,t,guidance_scale,
                     step_kwargs['recon_lr'] = recon_lr
                     score_delta_norm=score_delta.abs()
                     score_delta_norm=(score_delta_norm - score_delta_norm.min ()) / (score_delta_norm.max () - score_delta_norm.min ())
-                    import seaborn as sns
-                    import matplotlib.pyplot as plt
                     mask_edit = (score_delta.abs() > threshold).float()
                     if save_heatmap and i%10==0:
                         for kk in range(4):
@@ -946,3 +884,95 @@ def exec_classifier_free_guidance(model,latents,controller,t,guidance_scale,
     if controller is not None:
         latents = controller.step_callback(latents)
     return latents.to(model.unet.dtype)
+
+def prox_regularization(
+        noise_pred_uncond,
+        noise_pred_text,
+        i,
+        t,
+        prox_guidance=False,
+        prox='l1',
+        quantile=0.75,
+        recon_t=400,
+        dilate=2,
+        save_heatmap=False,
+    ):
+    if prox_guidance is True:
+        assert prox=='l1' or prox=='l0'
+        mask_edit = None
+        if prox == 'l1':
+            score_delta = (noise_pred_text - noise_pred_uncond).float()
+            if quantile > 0:
+                threshold = score_delta.abs().quantile(quantile)
+            else:
+                threshold = -quantile  # if quantile is negative, use it as a fixed threshold
+            score_delta -= score_delta.clamp(-threshold, threshold)
+            score_delta = torch.where(score_delta > 0, score_delta-threshold, score_delta)
+            score_delta = torch.where(score_delta < 0, score_delta+threshold, score_delta)
+            if (recon_t > 0 and t < recon_t) or (recon_t < 0 and t > -recon_t):
+                score_delta_norm=score_delta.abs()
+                score_delta_norm=(score_delta_norm - score_delta_norm.min ()) / (score_delta_norm.max () - score_delta_norm.min ())
+                mask_edit = (score_delta.abs() > threshold).float()
+                if save_heatmap and i%10==0:
+                    for kk in range(4):
+                        sns.heatmap(mask_edit[1][kk].clone().cpu(), cmap='coolwarm')
+                        plt.savefig(f'./vis/prox_inv/heatmap1_mask_{i}_{kk}.png')
+                        plt.clf()
+                if dilate > 0:
+                    radius = int(dilate)
+                    mask_edit = dilate(mask_edit.float(), kernel_size=2*radius+1, padding=radius)
+                if save_heatmap and i%10==0:
+                    for kk in range(4):
+                        sns.heatmap(mask_edit[1][kk].clone().cpu(), cmap='coolwarm')
+                        plt.savefig(f'./vis/prox_inv/heatmap1_mask_dilate_{i}_{kk}.png')
+                        plt.clf()
+        elif prox == 'l0':
+            score_delta = (noise_pred_text - noise_pred_uncond).float()
+            if quantile > 0:
+                threshold = score_delta.abs().quantile(quantile)
+            else:
+                threshold = -quantile  # if quantile is negative, use it as a fixed threshold
+            score_delta -= score_delta.clamp(-threshold, threshold)
+            if (recon_t > 0 and t < recon_t) or (recon_t < 0 and t > -recon_t):
+                mask_edit = (score_delta.abs() > threshold).float()
+                if dilate > 0:
+                    radius = int(dilate)
+                    mask_edit = dilate(mask_edit.float(), kernel_size=2*radius+1, padding=radius)
+        else:
+            raise NotImplementedError
+        return score_delta,mask_edit
+    else:
+        return noise_pred_text - noise_pred_uncond,None
+
+def proximal_guidance(
+        i,
+        t,
+        latents,
+        mask_edit,
+        dtype,
+        controller=None,
+        prox_guidance=False,
+        recon_t=400,
+        recon_lr=0.1,
+        x_stars=None, 
+        use_localblend_mask=False,
+        save_heatmap=False,
+    ):
+    if mask_edit is not None and prox_guidance and (recon_t > 0 and t < recon_t) or (recon_t < 0 and t > -recon_t):
+        if use_localblend_mask:
+            assert hasattr(controller,"local_blend")
+            if save_heatmap and i%10==0:
+                sns.heatmap(controller.local_blend.mask[0][0].clone().cpu(), cmap='coolwarm')
+                plt.savefig(f'./vis/prox_inv/heatmap0_localblendmask_{i}.png')
+                plt.clf()
+                sns.heatmap(controller.local_blend.mask[1][0].clone().cpu(), cmap='coolwarm')
+                plt.savefig(f'./vis/prox_inv/heatmap1_localblendmask_{i}.png')
+                plt.clf()
+            local_blend_mask=controller.local_blend.mask.float()
+            local_blend_mask[0]=local_blend_mask[1]
+            recon_mask=1-local_blend_mask.expand_as(latents)
+        else:
+            recon_mask = 1 - mask_edit
+        latents = latents - recon_lr * (latents - x_stars[len(x_stars)-i-2].expand_as(latents)) * recon_mask
+    return latents.to(dtype)   
+#class sdxl_for_inversion(StableDiffusionXLPipeline):

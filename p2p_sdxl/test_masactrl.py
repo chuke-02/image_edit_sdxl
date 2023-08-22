@@ -1,4 +1,4 @@
-from utils.run_ptp_utils import run_ptp,init_model
+from utils.run_code import run_ptp,init_model
 from utils.ptp_utils import view_images
 prompts=["a cat is running",
             "a dog is jumping"]

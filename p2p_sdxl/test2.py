@@ -1,4 +1,4 @@
-from utils.run_ptp_utils import run_ptp
+from utils.run_code import run_ptp
 from utils.ptp_utils import view_images
 branch =2
 if branch==1:
