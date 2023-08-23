@@ -1,7 +1,5 @@
 # p2p_sdxl
-(还需要调整)
-以下代码在test.py中。  
-最后一段代码里有注释。  
+example.py中。    
 ptp:
 
 ```python
@@ -83,3 +81,112 @@ run_ptp(
 )
 ```
 ![img](markdown/img_2023-08-13_10-57-50.jpg)
+
+# 仅inversion
+见example_inversion.py
+```python
+# 1. 准备模型
+device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
+scheduler = DDIMScheduler(
+    beta_start=0.00085,
+    beta_end=0.012,
+    beta_schedule="scaled_linear",
+    clip_sample=False, 
+    set_alpha_to_one=False
+)
+model = sdxl.from_pretrained(
+    "/stable-diffusion-xl-base-1.0", 
+    torch_dtype=torch.float16,
+    use_safetensors=True, 
+    variant="fp16", 
+    scheduler=scheduler
+)
+model.to(device)
+num_ddim_steps = 50
+inversion = Inversion(model, num_ddim_steps)
+prompt="Photo of a cat riding a bike"
+inv_mode="proxNPI"
+if inv_mode=="proxNPI":
+    prox_guidance=True
+elif inv_mode=="NPI":
+    prox_guidance=False
+# 进行inversion
+(
+    (image_gt, image_enc),  # 分别为原图和inversion效果的上界(用vae encode后立刻decode出来)
+    x_T,  # 用于去噪的初始噪声
+    x_stars,  # inversion过程中各个step的latent组成的List
+    prompt_embeds,  # 原prompt的embdding
+    pooled_prompt_embeds # 原prompt的pooled embdding (SDXL有两个embdding)
+) = inversion.invert(
+    image_path="example_images/cat_bike1.jpg", #图片路径
+    prompt=prompt # 原图prompt
+)
+# 进行infer
+image=model(
+    prompt=prompt,
+    latents=x_T,
+    num_inference_steps=num_ddim_steps,
+    prox_guidance=prox_guidance, 
+    guidance_scale=7.5,
+    negative_prompt_embeds=prompt_embeds,
+    negative_pooled_prompt_embeds=pooled_prompt_embeds,
+    same_init=True,
+    return_dict=False
+)[0]
+view_images([image_gt,image[0]])
+```
+左边为原图，右边为重建后的图
+![img](markdown/img_2023-08-22_15-17-44.jpg)
+此外，使用inversion需要在infer的过程中做一些操作，见utils/sdxl_inversion.py中sdxl的__call__方法，我在增加或修改的代码处做了# ADD 或 # CHANGE的标记，具体内容如下：
+添加了三个输入
+```python
+def __call__(
+    self,
+    ......
+    same_init=False, # ADD ，各个prompt表示是否以同一高斯噪声为起点
+    x_stars=None, # ADD ，用于porx inversion
+    prox_guidance=False, # ADD ，为False时为negative prompt inversion，反之为porx inversion
+    ):
+```
+实现了same_init
+```python
+latents = self.prepare_latents(
+    batch_size * num_images_per_prompt,
+    num_channels_latents,
+    height,
+    width,
+    prompt_embeds.dtype,
+    device,
+    generator,
+    latents,
+    same_init=same_init #ADD
+)
+```
+在porx inversion中对noise_con和noise_uncond的差做了正则
+```python
+if do_classifier_free_guidance:
+    noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+    # CHANGE START
+    score_delta,mask_edit=self.prox_regularization(
+        noise_pred_uncond,
+        noise_pred_text,
+        i,
+        t,
+        prox_guidance=prox_guidance,
+    )
+    noise_pred = noise_pred_uncond + guidance_scale * score_delta
+    # CHANGE END
+```
+实现了porx inversion中的porx guidance
+```python
+# ADD START
+latents = self.proximal_guidance(
+    i,
+    t,
+    latents,
+    mask_edit,
+    dtype=self.unet.dtype,
+    x_stars=x_stars
+)
+# ADD END
+```

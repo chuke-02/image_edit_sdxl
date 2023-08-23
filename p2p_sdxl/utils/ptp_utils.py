@@ -47,6 +47,10 @@ def view_images(images, num_rows=1, offset_ratio=0.02,text="",folder=None,Notime
         images = [images]
         num_empty = 0
 
+    for i, per_image in enumerate(images):
+        if isinstance(per_image, Image.Image):
+            images[i] = np.array(per_image)
+        
     empty_images = np.ones(images[0].shape, dtype=np.uint8) * 255
     images = [image.astype(np.uint8) for image in images] + [empty_images] * num_empty
     num_items = len(images)

@@ -38,7 +38,6 @@ class sdxl(StableDiffusionXLPipeline):
     @torch.no_grad()
     def __call__(
         self,
-        controller=None,
         prompt: Union[str, List[str]] = None,
         height: Optional[int] = None,
         width: Optional[int] = None,
@@ -62,14 +61,9 @@ class sdxl(StableDiffusionXLPipeline):
         original_size: Optional[Tuple[int, int]] = None,
         crops_coords_top_left: Tuple[int, int] = (0, 0),
         target_size: Optional[Tuple[int, int]] = None,
-        same_init=False,
-        x_stars=None,
-        prox_guidance=False,
-        masa_control=False,
-        masa_mask=False,
-        masa_start_step=40,
-        masa_start_layer=55,
-        **kwargs
+        same_init=False, # ADD ，各个prompt表示是否以同一高斯噪声为起点
+        x_stars=None, # ADD ，用于porx inversion
+        prox_guidance=False, # ADD ，为False时为negative prompt inversion，反之为porx inversion
     ):
         r"""
         Function invoked when calling the pipeline for generation.
@@ -148,7 +142,12 @@ class sdxl(StableDiffusionXLPipeline):
                 TODO
             target_size (`Tuple[int]`, *optional*, defaults to (1024, 1024)):
                 TODO
-
+            same_init (`bool`, *optional*, defaults to `False`):
+                是否使用相同高斯噪声
+            x_stars (`List[Tensor]`, *optional*, defaults to `None`):
+                加噪(inversion)时各个step的latent
+            prox_guidance (`bool`, *optional*, defaults to `False`):
+                是否使用prox inversion,使用negative prompt inversion或不使用inversion时置为False
         Examples:
 
         Returns:
@@ -158,9 +157,6 @@ class sdxl(StableDiffusionXLPipeline):
             element is a list of `bool`s denoting whether the corresponding generated image likely represents
             "not-safe-for-work" (nsfw) content, according to the `safety_checker`.
         """
-        # -1. Controller
-        if controller is not None:
-            ptp_utils.register_attention_control(self, controller,masa_control,masa_mask,masa_start_step,masa_start_layer)
         # 0. Default height and width to unet
         height = height or self.default_sample_size * self.vae_scale_factor
         width = width or self.default_sample_size * self.vae_scale_factor
@@ -226,7 +222,7 @@ class sdxl(StableDiffusionXLPipeline):
 
         # 5. Prepare latent variables
         num_channels_latents = self.unet.config.in_channels
-        latents = self.prepare_latents(#2,4,64,64
+        latents = self.prepare_latents(
             batch_size * num_images_per_prompt,
             num_channels_latents,
             height,
@@ -303,12 +299,10 @@ class sdxl(StableDiffusionXLPipeline):
                     latents,
                     mask_edit,
                     dtype=self.unet.dtype,
-                    controller=controller,
                     x_stars=x_stars
                 )
                 # ADD END
-                if controller is not None:
-                    latents = controller.step_callback(latents)
+
                 # call the callback, if provided
                 if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
                     progress_bar.update()
@@ -822,8 +816,9 @@ class sdxl(StableDiffusionXLPipeline):
         if mask_edit is not None and prox_guidance and (recon_t > 0 and t < recon_t) or (recon_t < 0 and t > -recon_t):
             recon_mask = 1 - mask_edit
             latents = latents - recon_lr * (latents - x_stars[len(x_stars)-i-2].expand_as(latents)) * recon_mask
-        return latents.to(dtype)  
-    
+        return latents.to(dtype)   
+
+
 def slerp(val, low, high):
     """ taken from https://discuss.pytorch.org/t/help-regarding-slerp-function-for-generative-model-sampling/32475/4
     """
@@ -853,99 +848,5 @@ def dilate(image, kernel_size, stride=1, padding=0):
     
     return dilated_image
 
-def exec_classifier_free_guidance(model,latents,controller,t,guidance_scale,
-                                  do_classifier_free_guidance,noise_pred,guidance_rescale,
-                                  prox=None, quantile=0.75,image_enc=None, recon_lr=0.1, recon_t=400,recon_end_t=0,
-                                  inversion_guidance=False, reconstruction_guidance=False,x_stars=None, i=0,
-                                    use_localblend_mask=False,
-                                  save_heatmap=False,**kwargs):
-    # perform guidance
-    if do_classifier_free_guidance:
-        noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-        #noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
-        if prox is None and inversion_guidance is True:
-            prox = 'l1'
-        step_kwargs = {
-            'ref_image': None,
-            'recon_lr': 0,
-            'recon_mask': None,
-        }
-        mask_edit = None
-        if prox is not None:
-            if prox == 'l1':
-                score_delta = (noise_pred_text - noise_pred_uncond).float()
-                if quantile > 0:
-                    threshold = score_delta.abs().quantile(quantile)
-                else:
-                    threshold = -quantile  # if quantile is negative, use it as a fixed threshold
-                score_delta -= score_delta.clamp(-threshold, threshold)
-                score_delta = torch.where(score_delta > 0, score_delta-threshold, score_delta)
-                score_delta = torch.where(score_delta < 0, score_delta+threshold, score_delta)
-                if (recon_t > 0 and t < recon_t) or (recon_t < 0 and t > -recon_t):
-                    step_kwargs['ref_image'] = image_enc
-                    step_kwargs['recon_lr'] = recon_lr
-                    score_delta_norm=score_delta.abs()
-                    score_delta_norm=(score_delta_norm - score_delta_norm.min ()) / (score_delta_norm.max () - score_delta_norm.min ())
-                    mask_edit = (score_delta.abs() > threshold).float()
-                    if save_heatmap and i%10==0:
-                        for kk in range(4):
-                            sns.heatmap(mask_edit[1][kk].clone().cpu(), cmap='coolwarm')
-                            plt.savefig(f'./vis/prox_inv/heatmap1_mask_{i}_{kk}.png')
-                            plt.clf()
-                    if kwargs.get('dilate_mask', 2) > 0:
-                        radius = int(kwargs.get('dilate_mask', 2))
-                        mask_edit = dilate(mask_edit.float(), kernel_size=2*radius+1, padding=radius)
-                    if save_heatmap and i%10==0:
-                        for kk in range(4):
-                            sns.heatmap(mask_edit[1][kk].clone().cpu(), cmap='coolwarm')
-                            plt.savefig(f'./vis/prox_inv/heatmap1_mask_dilate_{i}_{kk}.png')
-                            plt.clf()
-                    step_kwargs['recon_mask'] = 1 - mask_edit
-            elif prox == 'l0':
-                score_delta = (noise_pred_text - noise_pred_uncond).float()
-                if quantile > 0:
-                    threshold = score_delta.abs().quantile(quantile)
-                else:
-                    threshold = -quantile  # if quantile is negative, use it as a fixed threshold
-                score_delta -= score_delta.clamp(-threshold, threshold)
-                if (recon_t > 0 and t < recon_t) or (recon_t < 0 and t > -recon_t):
-                    step_kwargs['ref_image'] = image_enc
-                    step_kwargs['recon_lr'] = recon_lr
-                    mask_edit = (score_delta.abs() > threshold).float()
-                    if kwargs.get('dilate_mask', 2) > 0:
-                        radius = int(kwargs.get('dilate_mask', 2))
-                        mask_edit = dilate(mask_edit.float(), kernel_size=2*radius+1, padding=radius)
-                    step_kwargs['recon_mask'] = 1 - mask_edit
-            else:
-                raise NotImplementedError
-            noise_pred = (noise_pred_uncond + guidance_scale * score_delta).to(model.unet.dtype)
-        else:
-            noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
-            
-    if do_classifier_free_guidance and guidance_rescale > 0.0:
-    # Based on 3.4. in https://arxiv.org/pdf/2305.08891.pdf
-        noise_pred = rescale_noise_cfg(noise_pred, noise_pred_text, guidance_rescale=guidance_rescale)
-    if reconstruction_guidance:
-        kwargs.update(step_kwargs)
-    latents = model.scheduler.step(noise_pred, t, latents, **kwargs, return_dict=False)[0]
-    if mask_edit is not None and inversion_guidance and (recon_t > recon_end_t and t < recon_t) or (recon_t < recon_end_t and t > -recon_t):
-        if use_localblend_mask:
-            assert hasattr(controller,"local_blend")
-            if save_heatmap and i%10==0:
-                sns.heatmap(controller.local_blend.mask[0][0].clone().cpu(), cmap='coolwarm')
-                plt.savefig(f'./vis/prox_inv/heatmap0_localblendmask_{i}.png')
-                plt.clf()
-                sns.heatmap(controller.local_blend.mask[1][0].clone().cpu(), cmap='coolwarm')
-                plt.savefig(f'./vis/prox_inv/heatmap1_localblendmask_{i}.png')
-                plt.clf()
-            local_blend_mask=controller.local_blend.mask.float()
-            local_blend_mask[0]=local_blend_mask[1]
-            recon_mask=1-local_blend_mask.expand_as(latents)
-        else:
-            recon_mask = 1 - mask_edit
-        latents = latents - recon_lr * (latents - x_stars[len(x_stars)-i-2].expand_as(latents)) * recon_mask
 
-    # controller
-    if controller is not None:
-        latents = controller.step_callback(latents)
-    return latents.to(model.unet.dtype)
+
