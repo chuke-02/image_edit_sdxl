@@ -137,7 +137,7 @@ view_images([image_gt,image[0]])
 ```
 左边为原图，右边为重建后的图
 ![img](markdown/img_2023-08-22_15-17-44.jpg)
-此外，使用inversion需要在infer的过程中做一些操作，见utils/sdxl_inversion.py中sdxl的__call__方法，我在增加或修改的代码处做了# ADD 或 # CHANGE的标记，具体内容如下：
+此外，使用inversion需要在infer的过程中做一些操作，见utils/sdxl_inversion.py中sdxl的__call__方法，以StableDiffusionXLPipeline(diffusers==0.18.2)的__call__为基准，我在增加或修改的代码处做了# ADD 或 # CHANGE的标记，具体内容如下：
 添加了三个输入
 ```python
 def __call__(
