@@ -298,6 +298,7 @@ class sdxl(StableDiffusionXLPipeline):
                     t,
                     latents,
                     mask_edit,
+                    prox_guidance=prox_guidance,
                     dtype=self.unet.dtype,
                     x_stars=x_stars
                 )
