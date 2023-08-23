@@ -38,8 +38,8 @@ def run_ptp(prompts,image_path=None,inv_mode:Optional[str]=None,use_replace=Fals
         generator = torch.Generator().manual_seed(seed)
     else:
         generator = torch.Generator().manual_seed()
-    if inv_mode is not None:
-        assert isinstance(image_path,str)
+    if image_path is not None:
+        assert isinstance(inv_mode,str)
         (image_gt, image_enc), x_t,x_stars, prompt_embeds,pooled_prompt_embeds = inversion.invert(image_path, prompts[0], offsets=(0,0,0,0), verbose=True,train_free=True,all_latents=True)
         assert inv_mode =="proxNPI" or inv_mode =="NPI"
         if  inv_mode =="proxNPI":
