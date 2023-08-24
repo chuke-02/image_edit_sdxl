@@ -131,6 +131,7 @@ image=model(
     negative_prompt_embeds=prompt_embeds,
     negative_pooled_prompt_embeds=pooled_prompt_embeds,
     same_init=True,
+    x_stars=x_stars,
     return_dict=False
 )[0]
 view_images([image_gt,image[0]])
