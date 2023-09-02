@@ -22,7 +22,7 @@ model = sdxl.from_pretrained(
 model.to(device)
 num_ddim_steps = 50
 inversion = Inversion(model, num_ddim_steps)
-prompt="Photo of a cat riding a bike"
+prompt="A raccoon sitting in a wooden bucket"
 inv_mode="proxNPI"
 if inv_mode=="proxNPI":# prox inversion,准确度高
     prox_guidance=True
@@ -36,7 +36,7 @@ elif inv_mode=="NPI":# nagative prompt inversion
     prompt_embeds,  # 原prompt的embdding
     pooled_prompt_embeds # 原prompt的pooled embdding (SDXL有两个embdding)
 ) = inversion.invert(
-    image_path="example_images/cat_bike1.jpg", #图片路径
+    image_path="example_images/raccoon.png", #图片路径
     prompt=prompt # 原图prompt
 )
 # 进行infer

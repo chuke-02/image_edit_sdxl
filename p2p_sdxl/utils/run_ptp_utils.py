@@ -238,7 +238,6 @@ class AttentionControlEdit(AttentionStore, abc.ABC):
         #print(self.local_blend.counter)
         if self.local_blend.counter >= masa_start_step and self.local_blend.mask is not None  and self.self_layer>=masa_start_layer:
             #q,k,v均为[40,4096,64]
-            print(masa_start_step)
             kv=torch.cat([k,v],dim=0)
             split_kv = kv.split(heads, dim=0)
             new_kv = torch.stack(split_kv, dim=0)# [8(batch_size*4),10,4096,64]

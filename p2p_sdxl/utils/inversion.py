@@ -3,6 +3,7 @@ import numpy as np
 from PIL import Image
 from typing import Optional, Union, Tuple, List, Callable, Dict
 import utils.ptp_utils as ptp_utils
+from diffusers import DDIMInverseScheduler,DPMSolverMultistepInverseScheduler
 class Inversion:
 
     def next_step(self, model_output: Union[torch.FloatTensor, np.ndarray], timestep: int,
@@ -123,11 +124,23 @@ class Inversion:
         uncond_embeddings, cond_embeddings = self.context.chunk(2)
         all_latent = [latent]
         latent = latent.clone().detach()
+        extra_step_kwargs = self.model.prepare_extra_step_kwargs(self.generator, self.eta)
+        if isinstance(self.inverse_scheduler,DDIMInverseScheduler):
+            extra_step_kwargs.pop("generator")
         for i in range(self.num_ddim_steps):
             #print(i)
-            t = self.model.scheduler.timesteps[len(self.model.scheduler.timesteps) - i - 1]
-            noise_pred = self.get_noise_pred_single(latent, t, cond_embeddings,cond=True)
-            latent = self.next_step(noise_pred, t, latent)
+            use_inv_sc=True
+            if use_inv_sc:
+                t = self.inverse_scheduler.timesteps[i]
+                noise_pred = self.get_noise_pred_single(latent, t, cond_embeddings,cond=True)
+
+
+                #latent = self.next_step(noise_pred, t, latent)
+                latent = self.inverse_scheduler.step(noise_pred, t, latent, **extra_step_kwargs, return_dict=False)[0]
+            else:
+                t = self.model.scheduler.timesteps[len(self.model.scheduler.timesteps) - i - 1]
+                noise_pred = self.get_noise_pred_single(latent, t, cond_embeddings,cond=True)
+                latent = self.next_step(noise_pred, t, latent)
             all_latent.append(latent)
         return all_latent
 
@@ -145,7 +158,7 @@ class Inversion:
     def invert(self, image_path: str, prompt: str, offsets=(0, 0, 0, 0), num_inner_steps=10, early_stop_epsilon=1e-5,
                verbose=True,train_free=True,all_latents=True):
         self.init_prompt(prompt)
-        ptp_utils.register_attention_control(self.model, None)
+        #ptp_utils.register_attention_control(self.model, None)
         image_gt = load_1024(image_path, *offsets)
         if verbose:
             print("DDIM inversion...")
@@ -162,15 +175,23 @@ class Inversion:
                 return (image_gt, image_rec), ddim_latents[-1], self.prompt_embeds[1].unsqueeze(0),self.pooled_prompt_embeds
 
 
-    def __init__(self, model,num_ddim_steps):
+    def __init__(self, model,num_ddim_steps,generator=None,scheduler_type="DDIM"):
         self.model = model
         self.tokenizer = self.model.tokenizer
         self.num_ddim_steps=num_ddim_steps
+        if scheduler_type == "DDIM":
+            self.inverse_scheduler=DDIMInverseScheduler.from_config(self.model.scheduler.config)
+            self.inverse_scheduler.set_timesteps(num_ddim_steps)
+        elif scheduler_type=="DPMSolver":
+            self.inverse_scheduler=DPMSolverMultistepInverseScheduler.from_config(self.model.scheduler.config)
+            self.inverse_scheduler.set_timesteps(num_ddim_steps)
         self.model.scheduler.set_timesteps(num_ddim_steps)
         self.model.vae.to(dtype=torch.float32)
         self.prompt = None
         self.context = None
         self.device=self.model.unet.device
+        self.generator=generator
+        self.eta=0.0
 
 def load_512(image_path, left=0, right=0, top=0, bottom=0):
     if type(image_path) is str:

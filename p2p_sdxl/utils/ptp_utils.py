@@ -189,7 +189,7 @@ def draw_axis(img,grid_dict,x_len,y_len):
         draw.text((x, y), y_title, font=font, fill=color_y,align="center")
         x = width // (num_x * 2)+width *0.2// num_x+shift_x_x
         y = (i - 1) * height // num_y + height // (num_y * 2)+shift_x_y
-        draw.text((x, y), x_title, font=font, fill=color_x,align="center")
+        draw.text((x, y), x_title, font=font, fill=color_x,align="left")
         x = width // 4
         y = (i - 1) * height // num_y + height // (num_y * 10)
         draw.text((x, y), title, font=font, fill='blue',align="left")
@@ -334,9 +334,9 @@ def register_attention_control(model, controller,masa_control=False,masa_mask=Tr
             q = self.head_to_batch_dim(q)#10,4096,64      10,4096,64
             k = self.head_to_batch_dim(k)#10,4096,64      10,77,64
             v = self.head_to_batch_dim(v)#10,4096,64      10,77,64
-            if hasattr(controller, 'count_layers'):
+            if hasattr(controller, 'count_layers'): #给masa controll用的
                 controller.count_layers(place_in_unet,is_cross)
-            if masa_control is True and is_cross is False:
+            if masa_control is True and is_cross is False:#给masa controll用的
                 #qkv={"q":q,"k":k,"v":v}
                 q,k,v,masa_control_mask=controller.replace_self_attention_kv(q,k,v,h,place_in_unet,masa_start_step,masa_start_layer) 
                 if masa_mask is True and masa_control_mask is not None:
@@ -364,11 +364,14 @@ def register_attention_control(model, controller,masa_control=False,masa_mask=Tr
 
                     max_neg_value = -torch.finfo(sim_fg.dtype).max
                     
-                    sim_fg.masked_fill_(~mask_src, max_neg_value)
-                    sim_bg.masked_fill_(mask_src, max_neg_value)
-                    sim = torch.cat([sim_fg, sim_bg])
+                    sim_fg.masked_fill_(~mask_src, max_neg_value).softmax(dim=-1)
+                    sim_bg.masked_fill_(mask_src, max_neg_value).softmax(dim=-1)
+                    sim_fg=controller(sim_fg, is_cross, place_in_unet)
+                    sim_bg=controller(sim_bg, is_cross, place_in_unet)
+                    controller.cur_att_layer=controller.cur_att_layer-1
+                    attn = torch.cat([sim_fg, sim_bg])
 
-                    attn = sim.softmax(dim=-1)
+                    #attn = sim.softmax(dim=-1)
                     if len(attn) == 2 * len(v):
                         v = torch.cat([v] * 2)
                     out = torch.einsum("b i j, b j d -> b i d", attn, v)

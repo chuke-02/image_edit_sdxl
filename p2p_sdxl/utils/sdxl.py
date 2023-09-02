@@ -171,10 +171,12 @@ class sdxl(StableDiffusionXLPipeline):
         # 1. Check inputs. Raise error if not correct
         self.check_inputs(
             prompt,
+            None,
             height,
             width,
             callback_steps,
             negative_prompt,
+            None,
             prompt_embeds,
             negative_prompt_embeds,
             pooled_prompt_embeds,
@@ -304,7 +306,9 @@ class sdxl(StableDiffusionXLPipeline):
                     mask_edit,
                     prox_guidance=prox_guidance,
                     dtype=self.unet.dtype,
-                    x_stars=x_stars
+                    x_stars=x_stars,
+                    controller=controller,
+                    **kwargs
                 )
                 # ADD END
                 if controller is not None:
@@ -769,6 +773,7 @@ class sdxl(StableDiffusionXLPipeline):
         quantile=0.75,
         recon_t=400,
         dilate_radius=2,
+        img=None
     ):
         if prox_guidance is True:
             assert prox=='l1' or prox=='l0'
@@ -786,9 +791,28 @@ class sdxl(StableDiffusionXLPipeline):
                     score_delta_norm=score_delta.abs()
                     score_delta_norm=(score_delta_norm - score_delta_norm.min ()) / (score_delta_norm.max () - score_delta_norm.min ())
                     mask_edit = (score_delta.abs() > threshold).float()
+                    save_heatmap=False
+                    if save_heatmap and i%10==0:
+                        for kk in range(4):
+                            sns.heatmap(mask_edit[1][kk].clone().cpu(), cmap='coolwarm',cbar=False)
+                            plt.savefig(f'./vis/prox_inv/heatmap1_mask_{i}_{kk}.png')
+                            plt.clf()
                     if dilate_radius > 0:
                         radius = int(dilate_radius)
                         mask_edit = dilate(mask_edit.float(), kernel_size=2*radius+1, padding=radius)
+                        if save_heatmap and i%10==0:
+                            for kk in range(4):
+                                sns.heatmap(mask_edit[1][kk].clone().cpu(), cmap='coolwarm',cbar=False)
+                                plt.savefig(f'./vis/prox_inv/heatmap1_mask_dilate_{i}_{kk}.png')
+                                plt.clf()
+                            # if img is not None:
+                            #     # 绘制原始图片
+                            #     plt.imshow(img)
+
+                            #     # 叠加热力图
+                            #     sns.heatmap(F.interpolate(mask_edit[1][kk].clone().cpu(),(1024,1024)), cmap='coolwarm', alpha=0.5, ax=plt.gca())
+                            #     plt.savefig(f'./vis/prox_inv/heatmap1_mask_dilate_image_{i}_{kk}.png')
+                            #     plt.clf()
             elif prox == 'l0':
                 score_delta = (noise_pred_text - noise_pred_uncond).float()
                 if quantile > 0:
@@ -818,9 +842,20 @@ class sdxl(StableDiffusionXLPipeline):
         recon_t=400,
         recon_lr=0.1,
         x_stars=None, 
+        use_localblend_mask=False,
+        controller=None,
+        **kwargs
     ):
-        if mask_edit is not None and prox_guidance and (recon_t > 0 and t < recon_t) or (recon_t < 0 and t > -recon_t):
-            recon_mask = 1 - mask_edit
+        #print(i,t)
+
+        if  mask_edit is not None and prox_guidance and (recon_t > 0 and t < recon_t) or (recon_t < 0 and t > -recon_t):
+            if use_localblend_mask:
+                assert hasattr(controller,"local_blend")
+                local_blend_mask=controller.local_blend.mask.float()
+                local_blend_mask[0]=local_blend_mask[1]
+                recon_mask=1-local_blend_mask.expand_as(latents)
+            else:
+                recon_mask = 1 - mask_edit
             latents = latents - recon_lr * (latents - x_stars[len(x_stars)-i-2].expand_as(latents)) * recon_mask
         return latents.to(dtype)  
     

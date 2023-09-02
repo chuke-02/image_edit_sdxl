@@ -48,6 +48,7 @@
     
 from diffusers.schedulers.scheduling_ddim import DDIMScheduler
 from diffusers import StableDiffusionXLPipeline
+from diffusers import EulerDiscreteScheduler
 import torch
 #scheduler = DDIMScheduler()
 pipe = StableDiffusionXLPipeline.from_pretrained(
