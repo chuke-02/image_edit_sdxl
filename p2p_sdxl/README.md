@@ -3,7 +3,7 @@
 ```dockerfile
 docker pull chuke02/sdxl:20230903
 ```
-对应的代码在example.py中。    
+后文对应的代码在example.py中。    
 ptp:
 
 ```python
