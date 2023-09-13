@@ -1,4 +1,4 @@
-# p2p_sdxl
+# sdxl
 使用docker:
 ```dockerfile
 docker pull chuke02/sdxl:20230903
