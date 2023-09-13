@@ -167,10 +167,12 @@ class sdxl(StableDiffusionXLPipeline):
         # 1. Check inputs. Raise error if not correct
         self.check_inputs(
             prompt,
+            None,
             height,
             width,
             callback_steps,
             negative_prompt,
+            None,
             prompt_embeds,
             negative_prompt_embeds,
             pooled_prompt_embeds,

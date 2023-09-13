@@ -117,20 +117,14 @@ ptp+masa control效果会有点怪
 ```python
 # 1. 准备模型
 device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
-scheduler = DDIMScheduler(
-    beta_start=0.00085,
-    beta_end=0.012,
-    beta_schedule="scaled_linear",
-    clip_sample=False, 
-    set_alpha_to_one=False
-)
 model = sdxl.from_pretrained(
-    "stabilityai/stable-diffusion-xl-base-1.0", 
+    "/stable-diffusion-xl-base-1.0", 
     torch_dtype=torch.float16,
     use_safetensors=True, 
     variant="fp16", 
-    scheduler=scheduler
 )
+scheduler = DDIMScheduler.from_config(model.scheduler.config)
+model.scheduler=scheduler
 model.to(device)
 num_ddim_steps = 50
 inversion = Inversion(model, num_ddim_steps)
