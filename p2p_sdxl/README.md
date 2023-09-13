@@ -1,4 +1,4 @@
-# sdxl
+# prompt to prompt 和 masa control
 使用docker:
 ```dockerfile
 docker pull chuke02/sdxl:20230903
