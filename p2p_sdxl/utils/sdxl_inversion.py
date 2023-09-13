@@ -165,6 +165,7 @@ class sdxl(StableDiffusionXLPipeline):
         target_size = target_size or (height, width)
 
         # 1. Check inputs. Raise error if not correct
+        # CHANGE START
         self.check_inputs(
             prompt,
             None,
@@ -178,7 +179,7 @@ class sdxl(StableDiffusionXLPipeline):
             pooled_prompt_embeds,
             negative_pooled_prompt_embeds,
         )
-
+        # CHANGE END
 
         # 2. Define call parameters
         if prompt is not None and isinstance(prompt, str):

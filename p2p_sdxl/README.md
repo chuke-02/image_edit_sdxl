@@ -173,6 +173,24 @@ def __call__(
     prox_guidance=False, # ADD ，为False时为negative prompt inversion，反之为porx inversion
     ):
 ```
+为了使代码可以在 diffusers==0.20.2下运行，修改了
+```python
+# CHANGE START
+self.check_inputs(
+    prompt,
+    None,
+    height,
+    width,
+    callback_steps,
+    negative_prompt,
+    None,
+    prompt_embeds,
+    negative_prompt_embeds,
+    pooled_prompt_embeds,
+    negative_pooled_prompt_embeds,
+)
+# CHANGE END
+```
 实现了same_init
 ```python
 latents = self.prepare_latents(
