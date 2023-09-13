@@ -1,5 +1,5 @@
 # text-to-image-edit
-本仓库基于Stable Diffusion XL 1.0实现了以下算法：
+本仓库基于[Stable Diffusion XL 1.0](https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0)实现了以下算法：
 
 可控图片生成：
 
