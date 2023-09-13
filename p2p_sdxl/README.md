@@ -104,7 +104,7 @@ run_ptp(
     masa_control=True,  # 开启masa control
     masa_mask=False, # 是否使用基于mask的masa control，如果使用，要设定对应的blend_word,有时候似乎有bug?
     masa_start_step=10, #从第step 10开始进行masa control（替换self attention的 kv） 
-    masa_start_layer=45, #从unet的第45个cross attention开始替换
+    masa_start_layer=45, #从unet的第45个self attention开始替换
     x_t_replace=False, #True的话启用localblend，False的话不用localblend(获取mask但不进行x_t的替换)
 )
 ```
