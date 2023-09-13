@@ -74,7 +74,7 @@ run_ptp(
 run_ptp(
     prompts=["a cat is running",
         "two cats are running"],
-    self_replace_steps =0.0, #不使用ptp
+    self_replace_steps =0.0, #不使用ptp(可以同时使用ptp，但是效果有点奇怪)
     cross_replace_steps=0.0, #不使用ptp
     blend_word = ((('cat',), ("cat",))) ,
     eq_params = None,
@@ -86,14 +86,14 @@ run_ptp(
     use_replace=False,
     model_path="stabilityai/stable-diffusion-xl-base-1.0",
     masa_control=True,  # 开启masa control
-    masa_mask=False, # 是否使用基于mask的masa control，如果使用，要设定对应的blend_word
+    masa_mask=False, # 是否使用基于mask的masa control，如果使用，要设定对应的blend_word,有时候似乎有bug?
     masa_start_step=10, #从第step 10开始进行masa control（替换self attention的 kv） 
-    masa_start_layer=45, #从unet的第45
+    masa_start_layer=45, #从unet的第45个cross attention开始替换
     x_t_replace=False, #True的话启用localblend，False的话不用localblend
-    )
+)
 
 run_ptp(
-    prompts=["a cat is running",
+    prompts=["a cat is sitting",
         "a cat is laying"],
     self_replace_steps =0.0, #不使用ptp
     cross_replace_steps=0.0, #不使用ptp
@@ -107,9 +107,9 @@ run_ptp(
     use_replace=False,
     model_path="stabilityai/stable-diffusion-xl-base-1.0",
     masa_control=True,  # 开启masa control
-    masa_mask=False, # 是否使用基于mask的masa control，如果使用，要设定对应的blend_word
+    masa_mask=False, # 是否使用基于mask的masa control，如果使用，要设定对应的blend_word,有时候似乎有bug?
     masa_start_step=10, #从第step 10开始进行masa control（替换self attention的 kv） 
-    masa_start_layer=45, #从unet的第45
+    masa_start_layer=45, #从unet的第45个cross attention开始替换
     x_t_replace=False, #True的话启用localblend，False的话不用localblend
-    )
+)
 

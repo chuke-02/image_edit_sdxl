@@ -67,7 +67,7 @@ class sdxl(StableDiffusionXLPipeline):
         prox_guidance=False,
         masa_control=False,
         masa_mask=False,
-        masa_start_step=40,
+        masa_start_step=10,
         masa_start_layer=55,
         **kwargs
     ):

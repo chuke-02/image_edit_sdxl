@@ -1,19 +1,23 @@
 # p2p_sdxl
-example.py中。    
+使用docker:
+```dockerfile
+docker pull chuke02/sdxl:20230903
+```
+对应的代码在example.py中。    
 ptp:
 
 ```python
 run_ptp(
     prompts=["Photo of a cat riding on a little bicycle",
             "Photo of a cat riding on a little motorcycle"],
-    self_replace_steps = .2,
-    cross_replace_steps=.3,
-    eq_params = {"words": ("motorcycle",), "values": (1,)},
+    self_replace_steps = .2,#开始替换自注意力的step
+    cross_replace_steps=.3,#开始替换交叉注意力的step
+    eq_params = {"words": ("motorcycle",), "values": (1,)},#将motorcycle对应的cross attention乘1
     seed=12345,
     num_ddim_steps=50,
     guidance_scale=7.5,
-    use_replace=False,
-    model_path="/stable-diffusion-xl-base-1.0"
+    use_replace=False,#取False则使用refine，否则使用replace，一般而言refine效果更佳
+    model_path="stabilityai/stable-diffusion-xl-base-1.0"
 )
 ```
 
@@ -35,7 +39,7 @@ run_ptp(
     mask_threshold=0.4,
     start_blend=0.2,
     use_replace=False,
-    model_path="/stable-diffusion-xl-base-1.0"
+    model_path="stabilityai/stable-diffusion-xl-base-1.0"
 )
 ```
 ![img](markdown/img_2023-08-13_10-56-53.jpg)
@@ -56,7 +60,7 @@ run_ptp(
     mask_threshold=0.4,
     start_blend=0.2,
     use_replace=False,
-    model_path="/stable-diffusion-xl-base-1.0"
+    model_path="stabilityai/stable-diffusion-xl-base-1.0"
 )
 ```
 ![img](markdown/img_2023-08-13_10-57-22.jpg)
@@ -68,7 +72,7 @@ run_ptp(
     image_path="./example_images/cat_bike3.jpg",
     inv_mode="NPI", #NPI为Negative Prompt Inversion，proxNPI为Proximal Inversion
     self_replace_steps = .2, #开始替换自注意力的step
-    cross_replace_steps=.3, #开始替换交叉的step
+    cross_replace_steps=.3, #开始替换交叉注意力的step
     blend_word = ((('bicycle',), ("motorcycle",))) , #保持bicycle和motorcycle并集以外的部分不被编辑
     eq_params = {"words": ("motorcycle",), "values": (1,)}, #将motorcycle对应的cross atten map*1
     seed=12345,
@@ -77,11 +81,37 @@ run_ptp(
     mask_threshold=0.4,  # localblend确定mask时使用的阈值
     start_blend=0.2, # 从20%的step开始使用localblend
     use_replace=False, # 使用refine,而非replace
-    model_path="/stable-diffusion-xl-base-1.0"
+    model_path="stabilityai/stable-diffusion-xl-base-1.0"
 )
 ```
 ![img](markdown/img_2023-08-13_10-57-50.jpg)
-
+5.masa control(用于进行姿态上的编辑):
+```python
+run_ptp(
+    prompts=["a cat is sitting",
+        "a cat is laying"],
+    self_replace_steps =0.0, #不使用ptp(可以同时使用ptp，但是效果有点奇怪)
+    cross_replace_steps=0.0, #不使用ptp
+    blend_word = ((('cat',), ("cat",))) ,
+    eq_params = None,
+    seed=12345,
+    num_ddim_steps=50,
+    guidance_scale=7.5,
+    mask_threshold=0.5,
+    start_blend=0.2,
+    use_replace=False,
+    model_path="stabilityai/stable-diffusion-xl-base-1.0",
+    masa_control=True,  # 开启masa control
+    masa_mask=False, # 是否使用基于mask的masa control，如果使用，要设定对应的blend_word,有时候似乎有bug?
+    masa_start_step=10, #从第step 10开始进行masa control（替换self attention的 kv） 
+    masa_start_layer=45, #从unet的第45个cross attention开始替换
+    x_t_replace=False, #True的话启用localblend，False的话不用localblend(获取mask但不进行x_t的替换)
+)
+```
+![img](markdown/img_2023-09-13_14-53-52.jpg)
+真实图片编辑+ptp是ok的  
+真实图片编辑+masa control也是ok的  
+ptp+masa control效果会有点怪  
 # 仅inversion
 见example_inversion.py
 ```python
@@ -95,7 +125,7 @@ scheduler = DDIMScheduler(
     set_alpha_to_one=False
 )
 model = sdxl.from_pretrained(
-    "/stable-diffusion-xl-base-1.0", 
+    "stabilityai/stable-diffusion-xl-base-1.0", 
     torch_dtype=torch.float16,
     use_safetensors=True, 
     variant="fp16", 
