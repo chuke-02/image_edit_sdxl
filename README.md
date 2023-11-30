@@ -22,7 +22,9 @@ docker pull chuke02/sdxl:20230903
 ```
 使用conda:
 ```
-docker pull chuke02/sdxl:20230903
+conda create --name image_edit python=3.10
+conda activate image_edit
+pip install -r requirements.txt
 ```
 ## prompt to prompt 和 masa control
 
