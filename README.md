@@ -10,7 +10,9 @@ Inversion：
 - [Negative-prompt Inversion: Fast Image Inversion for Editing with Text-guided Diffusion Models](https://arxiv.org/abs/2305.16807)
 -  [Improving Tuning-Free Real Image Editing with Proximal Guidance](https://arxiv.org/abs/2306.05414)
 
-本仓库的实现参考了https://github.com/google/prompt-to-prompt和https://github.com/TencentARC/MasaCtrl
+本仓库的实现参考了  
+https://github.com/google/prompt-to-prompt  
+https://github.com/TencentARC/MasaCtrl
 
 # 使用
 ## 配置环境
