@@ -35,7 +35,7 @@ ptp:
 run_ptp(
     prompts=["Photo of a cat riding on a little bicycle",
             "Photo of a cat riding on a little motorcycle"],
-    self_replace_steps = .2,#开始替换自注意力的step
+    self_replace_steps =.2,#开始替换自注意力的step
     cross_replace_steps=.3,#开始替换交叉注意力的step
     eq_params = {"words": ("motorcycle",), "values": (1,)},#将motorcycle对应的cross attention乘1
     seed=12345,
