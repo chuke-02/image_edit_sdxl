@@ -1,4 +1,4 @@
-# text-to-image-edit
+# 概述
 本仓库基于[Stable Diffusion XL 1.0](https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0)实现了以下算法：
 
 可控图片生成：
@@ -10,13 +10,20 @@ Inversion：
 - [Negative-prompt Inversion: Fast Image Inversion for Editing with Text-guided Diffusion Models](https://arxiv.org/abs/2305.16807)
 -  [Improving Tuning-Free Real Image Editing with Proximal Guidance](https://arxiv.org/abs/2306.05414)
 
+本仓库的实现参考了https://github.com/google/prompt-to-prompt和https://github.com/TencentARC/MasaCtrl
 
 # 使用
-## prompt to prompt 和 masa control
+## 配置环境
 使用docker:
 ```dockerfile
 docker pull chuke02/sdxl:20230903
 ```
+使用conda:
+```
+docker pull chuke02/sdxl:20230903
+```
+## prompt to prompt 和 masa control
+
 后文对应的代码在example.py中。    
 ptp:
 
@@ -35,7 +42,7 @@ run_ptp(
 )
 ```
 
-![img](markdown/img_2023-08-13_10-56-31.jpg)
+![img](markdown_images/ptp.jpg)
 
 ptp+localblend:
 
@@ -56,7 +63,7 @@ run_ptp(
     model_path="stabilityai/stable-diffusion-xl-base-1.0"
 )
 ```
-![img](markdown/img_2023-08-13_10-56-53.jpg)
+![img](markdown_images/ptp_lb.jpg)
 真实图片编辑(Proximal Inversion)+ptp+localblend:
 ```python
 run_ptp(
@@ -77,7 +84,7 @@ run_ptp(
     model_path="stabilityai/stable-diffusion-xl-base-1.0"
 )
 ```
-![img](markdown/img_2023-08-13_10-57-22.jpg)
+![img](markdown_images/real_img_ptp.jpg)
 4.真实图片编辑(Negative Prompt Inversion)+ptp+localblend:
 ```python
 run_ptp(
@@ -98,7 +105,7 @@ run_ptp(
     model_path="stabilityai/stable-diffusion-xl-base-1.0"
 )
 ```
-![img](markdown/img_2023-08-13_10-57-50.jpg)
+![img](markdown_images/real_img_ptp_lb.jpg)
 5.masa control(用于进行姿态上的编辑):
 ```python
 run_ptp(
@@ -122,7 +129,7 @@ run_ptp(
     x_t_replace=False, #True的话启用localblend，False的话不用localblend(获取mask但不进行x_t的替换)
 )
 ```
-![img](markdown/img_2023-09-13_14-53-52.jpg)
+![img](markdown_images/masa_ctrl.jpg)
 真实图片编辑+ptp是ok的  
 真实图片编辑+masa control也是ok的  
 ptp+masa control效果会有点怪  
@@ -176,7 +183,7 @@ image=model(
 view_images([image_gt,image[0]])
 ```
 左边为原图，右边为重建后的图
-![img](markdown/img_2023-08-22_15-17-44.jpg)
+![img](markdown_images/reconstrction.jpg)
 此外，使用inversion需要在infer的过程中做一些操作，见utils/sdxl_inversion.py中sdxl的__call__方法，以StableDiffusionXLPipeline(diffusers==0.18.2)的__call__为基准，我在增加或修改的代码处做了# ADD 或 # CHANGE的标记，具体内容如下：
 添加了三个输入
 ```python
