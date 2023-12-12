@@ -29,7 +29,11 @@ pip install -r requirements.txt
 ## prompt to prompt 和 masa control
 
 后文对应的代码在example.py中。    
-ptp:
+注：localblend为ptp中使用的一种背景保持技术，通过cross attention获取要编辑的物体对应的mask，在sample时，将重建分支中mask外的latent复制到编辑分支中，使mask外的区域在编辑前后保持一致。  
+以下例子中：  
+1，2，5为从头生成图片（即不使用inversion技术，从高斯噪声进行sample，成对地生成图片，以此显示图片编辑的效果）  
+4，5为真实图片编辑，左图为对原图的重建，右图为编辑后的图片  
+1.ptp:
 
 ```python
 run_ptp(
@@ -48,7 +52,7 @@ run_ptp(
 
 ![img](markdown_images/ptp.jpg)
 
-ptp+localblend:
+2.ptp+localblend:
 
 ```python
 run_ptp(
@@ -68,7 +72,7 @@ run_ptp(
 )
 ```
 ![img](markdown_images/ptp_lb.jpg)
-真实图片编辑(Proximal Inversion)+ptp+localblend:
+3.真实图片编辑(Proximal Inversion)+ptp+localblend:
 ```python
 run_ptp(
     prompts=["Photo of a cat riding on a little bicycle",
@@ -134,11 +138,9 @@ run_ptp(
 )
 ```
 ![img](markdown_images/masa_ctrl.jpg)
-真实图片编辑+ptp是ok的  
-真实图片编辑+masa control也是ok的  
-ptp+masa control效果会有点怪  
+
 ## 仅inversion
-以下介绍如何修改sdxl的pipeline，使其支持inversion  
+以下介绍如何修改sdxl的pipeline，使其支持inversion，从而实现real image edit。   
 见example_inversion.py
 ```python
 # 1. 准备模型
