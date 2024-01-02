@@ -32,7 +32,7 @@ pip install -r requirements.txt
 注：localblend为ptp中使用的一种背景保持技术，通过cross attention获取要编辑的物体对应的mask，在sample时，将重建分支中mask外的latent复制到编辑分支中，使mask外的区域在编辑前后保持一致。  
 以下例子中：  
 1，2，5为从头生成图片（即不使用inversion技术，从高斯噪声进行sample，成对地生成图片，以此显示图片编辑的效果）  
-4，5为真实图片编辑，左图为对原图的重建，右图为编辑后的图片  
+3，4为真实图片编辑，左图为对原图的重建，右图为编辑后的图片  
 1.ptp:
 
 ```python
